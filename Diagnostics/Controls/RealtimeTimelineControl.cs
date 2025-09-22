@@ -6,20 +6,45 @@ using System.Globalization;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Immutable;
 using Diagnostics.Models;
+using Diagnostics.ViewModels;
 
 namespace Diagnostics.Controls;
 
 public class RealtimeTimelineControl : Control
 {
+    private const double TrackLabelAreaHeight = 24;
+    private const double LabelTextPadding = 2;
+    private const double MinVerticalLabelFontSize = 8;
+    private const double MaxVerticalLabelFontSize = 12;
+    private const double SummaryHeight = 64;
+    private const double SummaryTickLabelHeight = 16;
+    private const double SummaryWindowMinWidth = 6;
+
     private readonly Dictionary<TimelineTrack, NotifyCollectionChangedEventHandler?> _trackHandlers = new();
     private readonly Dictionary<TimelineEvent, NotifyCollectionChangedEventHandler> _eventChildHandlers = new();
     private static readonly ImmutableSolidColorBrush TrackBackgroundBrush = new(Color.FromArgb(24, 255, 255, 255));
+    private static readonly ImmutableSolidColorBrush LabelAreaBackgroundBrush = new(Color.FromArgb(12, 255, 255, 255));
+    private static readonly ImmutableSolidColorBrush LabelTextBrush = new(Color.FromArgb(220, 255, 255, 255));
     private static readonly Pen TrackSeparatorPen = new(new ImmutableSolidColorBrush(Color.FromArgb(32, 255, 255, 255)), 1);
     private static readonly Pen GridPen = new(new ImmutableSolidColorBrush(Color.FromArgb(48, 255, 255, 255)), 1);
     private static readonly Pen CurrentTimePen = new(new ImmutableSolidColorBrush(Color.FromArgb(192, 255, 140, 0)), 2);
+    private static readonly ImmutableSolidColorBrush SummaryBackgroundBrush = new(Color.FromArgb(24, 255, 255, 255));
+    private static readonly Pen SummaryBorderPen = new(new ImmutableSolidColorBrush(Color.FromArgb(64, 255, 255, 255)), 1);
+    private static readonly ImmutableSolidColorBrush SummaryWindowFill = new(Color.FromArgb(48, 255, 255, 255));
+    private static readonly Pen SummaryWindowPen = new(new ImmutableSolidColorBrush(Color.FromArgb(160, 255, 255, 255)), 1.5);
+    private static readonly Pen SummaryTickPen = new(new ImmutableSolidColorBrush(Color.FromArgb(72, 255, 255, 255)), 1);
+    private static readonly ImmutableSolidColorBrush SummaryTextBrush = new(Color.FromArgb(200, 255, 255, 255));
+
+    private Rect _summaryBounds;
+    private Rect _summaryWindowBounds;
+    private bool _isPanning;
+    private bool _isSummaryDragging;
+    private Point _lastPointerPosition;
+    private double _summaryDragOffsetRatio;
 
     public static readonly StyledProperty<IList<TimelineTrack>?> TracksProperty =
         AvaloniaProperty.Register<RealtimeTimelineControl, IList<TimelineTrack>?>(nameof(Tracks));
@@ -32,6 +57,9 @@ public class RealtimeTimelineControl : Control
 
     public static readonly StyledProperty<IBrush?> BackgroundProperty =
         AvaloniaProperty.Register<RealtimeTimelineControl, IBrush?>(nameof(Background));
+
+    public static readonly StyledProperty<TimelineViewModel?> TimelineProperty =
+        AvaloniaProperty.Register<RealtimeTimelineControl, TimelineViewModel?>(nameof(Timeline));
 
     static RealtimeTimelineControl()
     {
@@ -76,6 +104,12 @@ public class RealtimeTimelineControl : Control
     {
         get => GetValue(BackgroundProperty);
         set => SetValue(BackgroundProperty, value);
+    }
+
+    public TimelineViewModel? Timeline
+    {
+        get => GetValue(TimelineProperty);
+        set => SetValue(TimelineProperty, value);
     }
 
 
@@ -241,18 +275,30 @@ public class RealtimeTimelineControl : Control
 
         var tracks = Tracks;
         var trackCount = tracks?.Count ?? 0;
+        var contentHeight = Math.Max(0, height - SummaryHeight);
         if (trackCount > 0 && tracks is not null)
         {
-            var trackHeight = height / trackCount;
+            var totalLabelHeight = TrackLabelAreaHeight * trackCount;
+            var trackAreaHeight = Math.Max(0, contentHeight - totalLabelHeight);
+            var trackHeight = trackCount > 0 ? trackAreaHeight / trackCount : 0;
+            var stride = trackHeight + TrackLabelAreaHeight;
+            var top = 0d;
+
             for (var index = 0; index < trackCount; index++)
             {
                 var track = tracks[index];
-                var top = index * trackHeight;
-                DrawTrack(context, track, windowStart, now, visibleDuration, width, trackHeight, top);
+                var trackBounds = new Rect(0, top, width, trackHeight);
+                var labelArea = new Rect(0, trackBounds.Bottom, width, TrackLabelAreaHeight);
+                DrawTrack(context, track, windowStart, now, width, trackBounds, labelArea);
+                top += stride;
             }
         }
 
-        DrawCurrentTimeIndicator(context, windowStart, now, width, height);
+        DrawCurrentTimeIndicator(context, windowStart, now, width, contentHeight);
+
+        var summaryBounds = new Rect(0, contentHeight, width, Math.Max(0, height - contentHeight));
+        _summaryBounds = summaryBounds;
+        DrawSummaryTimeline(context, summaryBounds, windowStart, now);
     }
 
     private void DrawTimeGrid(DrawingContext context, DateTimeOffset windowStart, DateTimeOffset windowEnd, TimeSpan visibleDuration, double width, double height)
@@ -299,11 +345,16 @@ public class RealtimeTimelineControl : Control
         };
     }
 
-    private void DrawTrack(DrawingContext context, TimelineTrack track, DateTimeOffset windowStart, DateTimeOffset windowEnd, TimeSpan visibleDuration, double width, double trackHeight, double top)
+    private void DrawTrack(DrawingContext context, TimelineTrack track, DateTimeOffset windowStart, DateTimeOffset windowEnd, double width, Rect trackBounds, Rect labelArea)
     {
-        var trackBounds = new Rect(0, top, width, trackHeight);
         context.DrawRectangle(TrackBackgroundBrush, null, trackBounds);
         context.DrawLine(TrackSeparatorPen, new Point(trackBounds.Left, trackBounds.Bottom), new Point(trackBounds.Right, trackBounds.Bottom));
+
+        if (labelArea.Height > 0)
+        {
+            context.DrawRectangle(LabelAreaBackgroundBrush, null, labelArea);
+            context.DrawLine(TrackSeparatorPen, new Point(labelArea.Left, labelArea.Bottom), new Point(labelArea.Right, labelArea.Bottom));
+        }
 
         if (track.Events.Count == 0)
         {
@@ -312,11 +363,11 @@ public class RealtimeTimelineControl : Control
 
         foreach (var timelineEvent in track.Events)
         {
-            DrawEvent(context, timelineEvent, windowStart, windowEnd, width, trackBounds, depth: 0);
+            DrawEvent(context, timelineEvent, windowStart, windowEnd, width, trackBounds, labelArea, depth: 0);
         }
     }
 
-    private void DrawEvent(DrawingContext context, TimelineEvent timelineEvent, DateTimeOffset windowStart, DateTimeOffset windowEnd, double width, Rect availableBounds, int depth)
+    private void DrawEvent(DrawingContext context, TimelineEvent timelineEvent, DateTimeOffset windowStart, DateTimeOffset windowEnd, double width, Rect availableBounds, Rect labelArea, int depth)
     {
         var eventEnd = timelineEvent.End ?? windowEnd;
         if (eventEnd <= windowStart || timelineEvent.Start >= windowEnd)
@@ -349,30 +400,194 @@ public class RealtimeTimelineControl : Control
         var roundedRect = new RoundedRect(rect, timelineEvent.CornerRadius);
         context.DrawRectangle(timelineEvent.Fill, null, roundedRect);
 
-        if (!string.IsNullOrWhiteSpace(timelineEvent.Label) && rect.Width > 20)
+        if (!string.IsNullOrWhiteSpace(timelineEvent.Label))
         {
-            var typeface = new Typeface("Segoe UI");
-            var formattedText = new FormattedText(
-                timelineEvent.Label,
-                CultureInfo.CurrentCulture,
-                FlowDirection.LeftToRight,
-                typeface,
-                12,
-                Brushes.White);
+            if (rect.Width > 20)
+            {
+                var typeface = new Typeface("Segoe UI");
+                var formattedText = new FormattedText(
+                    timelineEvent.Label,
+                    CultureInfo.CurrentCulture,
+                    FlowDirection.LeftToRight,
+                    typeface,
+                    12,
+                    Brushes.White)
+                {
+                    MaxTextWidth = Math.Max(0, rect.Width - 8),
+                    MaxTextHeight = Math.Max(0, rect.Height - 8),
+                    TextAlignment = TextAlignment.Left,
+                    Trimming = TextTrimming.CharacterEllipsis
+                };
 
-            formattedText.MaxTextWidth = Math.Max(0, rect.Width - 8);
-            formattedText.MaxTextHeight = Math.Max(0, rect.Height - 8);
-            formattedText.TextAlignment = TextAlignment.Left;
-            formattedText.Trimming = TextTrimming.CharacterEllipsis;
-
-            var textOrigin = new Point(rect.X + 4, rect.Y + 4);
-            context.DrawText(formattedText, textOrigin);
+                var textOrigin = new Point(rect.X + 4, rect.Y + 4);
+                context.DrawText(formattedText, textOrigin);
+            }
+            else if (labelArea.Height > 0)
+            {
+                DrawVerticalLabel(context, timelineEvent.Label, rect.X + rect.Width / 2, labelArea);
+            }
         }
 
         foreach (var child in timelineEvent.Children)
         {
-            DrawEvent(context, child, windowStart, windowEnd, width, rect, depth + 1);
+            DrawEvent(context, child, windowStart, windowEnd, width, rect, labelArea, depth + 1);
         }
+    }
+
+    private void DrawVerticalLabel(DrawingContext context, string text, double centerX, Rect labelArea)
+    {
+        if (string.IsNullOrWhiteSpace(text) || labelArea.Height <= LabelTextPadding * 2)
+        {
+            return;
+        }
+
+        var availableHeight = labelArea.Height - LabelTextPadding * 2;
+        if (availableHeight <= 0)
+        {
+            return;
+        }
+
+        var characters = text.ToCharArray();
+        var characterCount = characters.Length;
+        if (characterCount == 0)
+        {
+            return;
+        }
+
+        var incrementalHeight = availableHeight / characterCount;
+        var fontSize = Math.Clamp(incrementalHeight, MinVerticalLabelFontSize, MaxVerticalLabelFontSize);
+        var typeface = new Typeface("Segoe UI");
+
+        var y = labelArea.Top + LabelTextPadding;
+        foreach (var ch in characters)
+        {
+            if (y > labelArea.Bottom)
+            {
+                break;
+            }
+
+            var glyph = new FormattedText(
+                ch.ToString(),
+                CultureInfo.CurrentCulture,
+                FlowDirection.LeftToRight,
+                typeface,
+                fontSize,
+                LabelTextBrush);
+
+            var origin = new Point(centerX - glyph.Width / 2, y);
+            context.DrawText(glyph, origin);
+            y += glyph.Height;
+        }
+    }
+
+    private void DrawSummaryTimeline(DrawingContext context, Rect bounds, DateTimeOffset windowStart, DateTimeOffset windowEnd)
+    {
+        context.DrawRectangle(SummaryBackgroundBrush, SummaryBorderPen, bounds);
+
+        if (bounds.Width <= 0 || bounds.Height <= 0)
+        {
+            _summaryWindowBounds = new Rect();
+            return;
+        }
+
+        var timeline = Timeline;
+        if (timeline is null)
+        {
+            _summaryWindowBounds = new Rect();
+            return;
+        }
+
+        var boundsInfo = timeline.GetTimelineBounds();
+        if (boundsInfo.End <= boundsInfo.Start)
+        {
+            _summaryWindowBounds = bounds;
+            return;
+        }
+
+        var eventAreaHeight = Math.Max(0, bounds.Height - SummaryTickLabelHeight);
+        var eventArea = new Rect(bounds.X, bounds.Y, bounds.Width, eventAreaHeight);
+        DrawSummaryEvents(context, eventArea, boundsInfo);
+        DrawSummaryTicks(context, bounds, boundsInfo);
+
+        var windowRect = CalculateSummaryWindow(bounds, boundsInfo, windowStart, windowEnd);
+        _summaryWindowBounds = windowRect;
+        context.DrawRectangle(SummaryWindowFill, SummaryWindowPen, windowRect);
+    }
+
+    private void DrawSummaryEvents(DrawingContext context, Rect eventArea, (DateTimeOffset Start, DateTimeOffset End) boundsInfo)
+    {
+        if (eventArea.Width <= 0 || eventArea.Height <= 0)
+        {
+            return;
+        }
+
+        var tracks = Tracks;
+        if (tracks is null)
+        {
+            return;
+        }
+
+        foreach (var evt in EnumerateEvents(tracks))
+        {
+            var evtEnd = evt.End ?? boundsInfo.End;
+            if (evtEnd <= boundsInfo.Start || evt.Start >= boundsInfo.End)
+            {
+                continue;
+            }
+
+            var startX = MapTimeToSummary(evt.Start, boundsInfo, eventArea);
+            var endX = MapTimeToSummary(evtEnd, boundsInfo, eventArea);
+            var width = Math.Max(1, endX - startX);
+            var rect = new Rect(startX, eventArea.Y + 3, width, Math.Max(2, eventArea.Height - 6));
+            var brush = evt.Fill ?? Brushes.White;
+            context.DrawRectangle(brush, null, rect);
+        }
+    }
+
+    private void DrawSummaryTicks(DrawingContext context, Rect bounds, (DateTimeOffset Start, DateTimeOffset End) range)
+    {
+        var totalSeconds = (range.End - range.Start).TotalSeconds;
+        if (totalSeconds <= 0)
+        {
+            return;
+        }
+
+        var tickAreaTop = bounds.Bottom - SummaryTickLabelHeight;
+        var tickStep = CalculateGridStep(totalSeconds, 8);
+        var firstTickSeconds = Math.Ceiling(range.Start.ToUnixTimeMilliseconds() / (tickStep * 1000)) * tickStep;
+
+        for (var tickSeconds = firstTickSeconds; tickSeconds <= range.End.ToUnixTimeMilliseconds() / 1000.0; tickSeconds += tickStep)
+        {
+            var tickTime = DateTimeOffset.FromUnixTimeMilliseconds((long)(tickSeconds * 1000));
+            var x = MapTimeToSummary(tickTime, range, bounds);
+            context.DrawLine(SummaryTickPen, new Point(x, bounds.Top), new Point(x, tickAreaTop));
+
+            var text = tickTime.ToLocalTime().ToString("HH:mm:ss", CultureInfo.CurrentCulture);
+            var formatted = new FormattedText(
+                text,
+                CultureInfo.CurrentCulture,
+                FlowDirection.LeftToRight,
+                new Typeface("Segoe UI"),
+                10,
+                SummaryTextBrush)
+            {
+                TextAlignment = TextAlignment.Center,
+                MaxTextWidth = 80,
+                MaxTextHeight = SummaryTickLabelHeight
+            };
+
+            var textOrigin = new Point(x - formatted.Width / 2, tickAreaTop + (SummaryTickLabelHeight - formatted.Height) / 2);
+            context.DrawText(formatted, textOrigin);
+        }
+    }
+
+    private Rect CalculateSummaryWindow(Rect summaryBounds, (DateTimeOffset Start, DateTimeOffset End) range, DateTimeOffset windowStart, DateTimeOffset windowEnd)
+    {
+        var start = MapTimeToSummary(windowStart, range, summaryBounds);
+        var end = MapTimeToSummary(windowEnd, range, summaryBounds);
+        var width = Math.Max(SummaryWindowMinWidth, end - start);
+        start = Math.Clamp(start, summaryBounds.Left, summaryBounds.Right - width);
+        return new Rect(start, summaryBounds.Y, width, summaryBounds.Height);
     }
 
     private void DrawCurrentTimeIndicator(DrawingContext context, DateTimeOffset windowStart, DateTimeOffset windowEnd, double width, double height)
@@ -404,6 +619,171 @@ public class RealtimeTimelineControl : Control
 
         var offset = (value - windowStart).TotalMilliseconds;
         return width * offset / total;
+    }
+
+    private static double MapTimeToSummary(DateTimeOffset value, (DateTimeOffset Start, DateTimeOffset End) bounds, Rect area)
+    {
+        var total = (bounds.End - bounds.Start).TotalMilliseconds;
+        if (total <= 0 || area.Width <= 0)
+        {
+            return area.X;
+        }
+
+        var offset = (value - bounds.Start).TotalMilliseconds;
+        var ratio = offset / total;
+        ratio = double.IsNaN(ratio) ? 0 : Math.Clamp(ratio, 0, 1);
+        return area.X + ratio * area.Width;
+    }
+
+    private DateTimeOffset XToTime(double x, DateTimeOffset windowStart, DateTimeOffset windowEnd, double width)
+    {
+        var total = (windowEnd - windowStart).TotalMilliseconds;
+        if (total <= 0 || width <= 0)
+        {
+            return windowStart;
+        }
+
+        var ratio = x / width;
+        ratio = Math.Clamp(ratio, 0, 1);
+        var offset = TimeSpan.FromMilliseconds(total * ratio);
+        return windowStart + offset;
+    }
+
+    private static IEnumerable<TimelineEvent> EnumerateEvents(IEnumerable<TimelineTrack> tracks)
+    {
+        foreach (var track in tracks)
+        {
+            foreach (var evt in EnumerateEventTree(track.Events))
+            {
+                yield return evt;
+            }
+        }
+    }
+
+    private static IEnumerable<TimelineEvent> EnumerateEventTree(IEnumerable<TimelineEvent> events)
+    {
+        foreach (var evt in events)
+        {
+            yield return evt;
+
+            foreach (var child in EnumerateEventTree(evt.Children))
+            {
+                yield return child;
+            }
+        }
+    }
+
+    protected override void OnPointerPressed(PointerPressedEventArgs e)
+    {
+        base.OnPointerPressed(e);
+
+        if (Timeline is null)
+        {
+            return;
+        }
+
+        var point = e.GetCurrentPoint(this);
+        if (!point.Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        var position = point.Position;
+        _lastPointerPosition = position;
+
+        if (_summaryBounds.Contains(position) && _summaryWindowBounds.Width > 0)
+        {
+            _isSummaryDragging = true;
+            var relativeX = position.X - _summaryWindowBounds.X;
+            _summaryDragOffsetRatio = _summaryWindowBounds.Width > 0 ? Math.Clamp(relativeX / _summaryWindowBounds.Width, 0, 1) : 0.5;
+        }
+        else
+        {
+            _isPanning = true;
+        }
+
+        e.Pointer.Capture(this);
+        e.Handled = true;
+    }
+
+    protected override void OnPointerMoved(PointerEventArgs e)
+    {
+        base.OnPointerMoved(e);
+
+        var timeline = Timeline;
+        if (timeline is null)
+        {
+            return;
+        }
+
+        if (!_isPanning && !_isSummaryDragging)
+        {
+            return;
+        }
+
+        var position = e.GetPosition(this);
+        var delta = position - _lastPointerPosition;
+
+        if (_isPanning && Bounds.Width > 0)
+        {
+            var ratio = -delta.X / Bounds.Width;
+            timeline.PanViewport(ratio);
+            e.Handled = true;
+        }
+        else if (_isSummaryDragging && _summaryBounds.Width > 0)
+        {
+            var boundsInfo = timeline.GetTimelineBounds();
+            var totalMillis = (boundsInfo.End - boundsInfo.Start).TotalMilliseconds;
+            if (totalMillis > 0)
+            {
+                var normalized = (position.X - _summaryBounds.X) / _summaryBounds.Width;
+                normalized = Math.Clamp(normalized, 0, 1);
+                var target = boundsInfo.Start + TimeSpan.FromMilliseconds(totalMillis * normalized);
+                var offset = TimeSpan.FromMilliseconds(timeline.VisibleDuration.TotalMilliseconds * _summaryDragOffsetRatio);
+                var newStart = target - offset;
+                timeline.MoveViewport(newStart);
+                e.Handled = true;
+            }
+        }
+
+        _lastPointerPosition = position;
+    }
+
+    protected override void OnPointerReleased(PointerReleasedEventArgs e)
+    {
+        base.OnPointerReleased(e);
+
+        if (Equals(e.Pointer.Captured, this))
+        {
+            e.Pointer.Capture(null);
+        }
+
+        _isPanning = false;
+        _isSummaryDragging = false;
+    }
+
+    protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
+    {
+        base.OnPointerWheelChanged(e);
+
+        var timeline = Timeline;
+        if (timeline is null || Bounds.Width <= 0)
+        {
+            return;
+        }
+
+        var delta = e.Delta.Y;
+        if (Math.Abs(delta) < double.Epsilon)
+        {
+            return;
+        }
+
+        var position = e.GetPosition(this);
+        var windowStart = CurrentTime - VisibleDuration;
+        var anchor = XToTime(position.X, windowStart, CurrentTime, Bounds.Width);
+        var scale = delta > 0 ? 0.8 : 1.25;
+        timeline.ZoomAround(anchor, scale);
+        e.Handled = true;
     }
 
     private void AttachEvent(TimelineEvent timelineEvent)

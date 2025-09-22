@@ -18,6 +18,23 @@
 
     <Grid RowDefinitions="Auto,*">
         <StackPanel Orientation="Horizontal" Margin="12" Spacing="8">
+            <Button Content="Start Capture"
+                    Command="{Binding StartCaptureCommand}"
+                    MinWidth="110"/>
+            <Button Content="Stop Capture"
+                    Command="{Binding StopCaptureCommand}"
+                    MinWidth="110"/>
+            <Separator Margin="4,0" Width="1" Background="#40FFFFFF"/>
+            <Button Content="Zoom In"
+                    Command="{Binding ZoomInCommand}"
+                    MinWidth="80"/>
+            <Button Content="Zoom Out"
+                    Command="{Binding ZoomOutCommand}"
+                    MinWidth="80"/>
+            <Button Content="Reset Zoom"
+                    Command="{Binding ResetZoomCommand}"
+                    MinWidth="100"/>
+            <Separator Margin="4,0" Width="1" Background="#40FFFFFF"/>
             <Button Content="Run Demo"
                     Command="{Binding RunDemoCommand}"
                     MinWidth="100"/>
@@ -27,6 +44,7 @@
                                           Tracks="{Binding Timeline.Tracks}"
                                           CurrentTime="{Binding Timeline.CurrentTime}"
                                           VisibleDuration="{Binding Timeline.VisibleDuration}"
+                                          Timeline="{Binding Timeline}"
                                           Margin="12"
                                           Background="#FF1E1E1E"/>
     </Grid>

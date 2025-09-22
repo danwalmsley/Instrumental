@@ -1,8 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel;
+using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Net;
+using System.Windows.Input;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
@@ -11,7 +13,7 @@ using Diagnostics.EventBroadcast.Messaging;
 using Diagnostics.Services;
 using ReactiveUI;
 using System.Reactive;
-using System.Windows.Input;
+using System.Reactive.Linq;
 
 namespace Diagnostics.ViewModels;
 
@@ -22,10 +24,16 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
     private bool _disposed;
     private CancellationTokenSource? _demoCts;
     private Task? _demoTask;
+    private readonly List<IDisposable> _commandsToDispose = new();
 
     public MainWindowViewModel()
     {
-        RunDemoCommand = ReactiveCommand.CreateFromTask(RunDemoAsync);
+        RunDemoCommand = RegisterCommand(ReactiveCommand.CreateFromTask(RunDemoAsync, outputScheduler: RxApp.MainThreadScheduler));
+        StartCaptureCommand = CreateCommand(Timeline.StartCapture, () => !Timeline.IsCapturing, nameof(TimelineViewModel.IsCapturing));
+        StopCaptureCommand = CreateCommand(Timeline.StopCapture, () => Timeline.IsCapturing, nameof(TimelineViewModel.IsCapturing));
+        ZoomInCommand = CreateCommand(() => Timeline.AdjustZoom(0.5));
+        ZoomOutCommand = CreateCommand(() => Timeline.AdjustZoom(2.0));
+        ResetZoomCommand = CreateCommand(Timeline.ResetZoom);
 
         if (Design.IsDesignMode)
         {
@@ -50,6 +58,11 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
     public TimelineViewModel Timeline { get; } = new();
 
     public ICommand RunDemoCommand { get; }
+    public ICommand StartCaptureCommand { get; }
+    public ICommand StopCaptureCommand { get; }
+    public ICommand ZoomInCommand { get; }
+    public ICommand ZoomOutCommand { get; }
+    public ICommand ResetZoomCommand { get; }
 
     private void SeedDesignTimeData()
     {
@@ -91,10 +104,11 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
             }
         }
 
-        if (RunDemoCommand is IDisposable commandDisposable)
+        foreach (var command in _commandsToDispose)
         {
-            commandDisposable.Dispose();
+            command.Dispose();
         }
+        _commandsToDispose.Clear();
 
         Timeline.Dispose();
 
@@ -267,4 +281,37 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
         color.A < byte.MaxValue
             ? $"#{color.A:X2}{color.R:X2}{color.G:X2}{color.B:X2}"
             : $"#{color.R:X2}{color.G:X2}{color.B:X2}";
+
+    private ICommand CreateCommand(Action execute, Func<bool>? canExecuteEvaluator = null, params string[] observedTimelineProperties)
+    {
+        if (canExecuteEvaluator is null)
+        {
+            return RegisterCommand(ReactiveCommand.Create(execute));
+        }
+
+        var observedProperties = observedTimelineProperties is { Length: > 0 }
+            ? observedTimelineProperties
+            : Array.Empty<string>();
+
+        var propertyChanges = Observable
+            .FromEventPattern<PropertyChangedEventHandler, PropertyChangedEventArgs>(
+                handler => Timeline.PropertyChanged += handler,
+                handler => Timeline.PropertyChanged -= handler)
+            .Where(evt => string.IsNullOrEmpty(evt.EventArgs.PropertyName) || observedProperties.Length == 0 || Array.IndexOf(observedProperties, evt.EventArgs.PropertyName) >= 0)
+            .Select(_ => canExecuteEvaluator());
+
+        var canExecute = Observable.Return(canExecuteEvaluator()).Concat(propertyChanges);
+
+        return RegisterCommand(ReactiveCommand.Create(execute, canExecute));
+    }
+
+    private ICommand RegisterCommand(ICommand command)
+    {
+        if (command is IDisposable disposable)
+        {
+            _commandsToDispose.Add(disposable);
+        }
+
+        return command;
+    }
 }
