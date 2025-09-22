@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
@@ -97,11 +98,19 @@ public sealed class TimelineEventBroadcaster : IAsyncDisposable, IDisposable
             return;
         }
 
+        var batch = new List<TimelineEventMessage>();
         while (_queue.TryDequeue(out var message))
         {
-            var buffer = JsonSerializer.SerializeToUtf8Bytes(message, TimelineEventSerializer.Options);
-            await client.SendAsync(buffer, buffer.Length, _broadcastEndpoint).WaitAsync(cancellationToken).ConfigureAwait(false);
+            batch.Add(message);
         }
+
+        if (batch.Count == 0)
+        {
+            return;
+        }
+
+        var buffer = JsonSerializer.SerializeToUtf8Bytes(batch, TimelineEventSerializer.Options);
+        await client.SendAsync(buffer, buffer.Length, _broadcastEndpoint).WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private void ThrowIfDisposed()

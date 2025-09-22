@@ -94,22 +94,51 @@ public sealed class TimelineEventListener : IAsyncDisposable, IDisposable
                 continue;
             }
 
-            TimelineEventMessage? message = null;
+            TimelineEventMessage? singleMessage = null;
+            TimelineEventMessage[]? batch = null;
             try
             {
-                message = JsonSerializer.Deserialize<TimelineEventMessage>(result.Buffer, _serializerOptions);
+                var buffer = result.Buffer;
+                var index = 0;
+                while (index < buffer.Length && char.IsWhiteSpace((char)buffer[index]))
+                {
+                    index++;
+                }
+
+                var isArray = index < buffer.Length && buffer[index] == '[';
+                if (isArray)
+                {
+                    batch = JsonSerializer.Deserialize<TimelineEventMessage[]>(buffer, _serializerOptions);
+                }
+                else
+                {
+                    singleMessage = JsonSerializer.Deserialize<TimelineEventMessage>(buffer, _serializerOptions);
+                }
             }
             catch (JsonException)
             {
                 // Ignore invalid payloads
             }
 
-            if (message is null)
+            if (batch is { Length: > 0 })
+            {
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    foreach (var message in batch)
+                    {
+                        ApplyMessage(message);
+                    }
+                }, DispatcherPriority.Background);
+
+                continue;
+            }
+
+            if (singleMessage is null)
             {
                 continue;
             }
 
-            await Dispatcher.UIThread.InvokeAsync(() => ApplyMessage(message), DispatcherPriority.Background);
+            await Dispatcher.UIThread.InvokeAsync(() => ApplyMessage(singleMessage), DispatcherPriority.Background);
         }
     }
 

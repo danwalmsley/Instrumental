@@ -402,16 +402,37 @@ public class RealtimeTimelineControl : Control
         var roundedRect = new RoundedRect(rect, timelineEvent.CornerRadius);
         context.DrawRectangle(timelineEvent.Fill, null, roundedRect);
 
+        var eventDuration = (timelineEvent.End ?? windowEnd) - timelineEvent.Start;
+        if (eventDuration < TimeSpan.Zero)
+        {
+            eventDuration = TimeSpan.Zero;
+        }
+
+        var durationText = FormatDuration(eventDuration);
+        var durationFormatted = new FormattedText(
+            durationText,
+            CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight,
+            new Typeface("Segoe UI"),
+            10,
+            Brushes.White)
+        {
+            Trimming = TextTrimming.None,
+            TextAlignment = TextAlignment.Left,
+            MaxTextWidth = Math.Max(0, rect.Width - 8)
+        };
+
+        var labelDrawn = false;
+
         if (!string.IsNullOrWhiteSpace(timelineEvent.Label))
         {
             if (rect.Width > 20)
             {
-                var typeface = new Typeface("Segoe UI");
                 var formattedText = new FormattedText(
                     timelineEvent.Label,
                     CultureInfo.CurrentCulture,
                     FlowDirection.LeftToRight,
-                    typeface,
+                    new Typeface("Segoe UI"),
                     12,
                     Brushes.White)
                 {
@@ -423,10 +444,35 @@ public class RealtimeTimelineControl : Control
 
                 var textOrigin = new Point(rect.X + 4, rect.Y + 4);
                 context.DrawText(formattedText, textOrigin);
+
+                var durationOriginY = textOrigin.Y + formattedText.Height + 2;
+                if (durationOriginY + durationFormatted.Height > rect.Bottom - 4)
+                {
+                    durationOriginY = rect.Bottom - durationFormatted.Height - 4;
+                }
+
+                var durationOrigin = new Point(rect.X + 4, durationOriginY);
+                context.DrawText(durationFormatted, durationOrigin);
+                labelDrawn = true;
             }
             else if (labelArea.Height > 0)
             {
                 DrawVerticalLabel(context, timelineEvent.Label, rect.X + rect.Width / 2, labelArea);
+                DrawDurationInLabelArea(context, durationFormatted, rect, labelArea);
+                labelDrawn = true;
+            }
+        }
+
+        if (!labelDrawn)
+        {
+            if (rect.Width > 20)
+            {
+                var durationOrigin = new Point(rect.X + 4, rect.Bottom - durationFormatted.Height - 4);
+                context.DrawText(durationFormatted, durationOrigin);
+            }
+            else if (labelArea.Height > 0)
+            {
+                DrawDurationInLabelArea(context, durationFormatted, rect, labelArea);
             }
         }
 
@@ -434,6 +480,18 @@ public class RealtimeTimelineControl : Control
         {
             DrawEvent(context, child, windowStart, windowEnd, width, rect, labelArea, depth + 1);
         }
+    }
+
+    private void DrawDurationInLabelArea(DrawingContext context, FormattedText durationText, Rect eventRect, Rect labelArea)
+    {
+        if (labelArea.Height <= 0)
+        {
+            return;
+        }
+
+        var x = Math.Clamp(eventRect.X + eventRect.Width / 2 - durationText.Width / 2, labelArea.Left, labelArea.Right - durationText.Width);
+        var y = labelArea.Bottom - durationText.Height - LabelTextPadding;
+        context.DrawText(durationText, new Point(x, y));
     }
 
     private void DrawVerticalLabel(DrawingContext context, string text, double centerX, Rect labelArea)
@@ -673,6 +731,21 @@ public class RealtimeTimelineControl : Control
                 yield return child;
             }
         }
+    }
+
+    private static string FormatDuration(TimeSpan duration)
+    {
+        if (duration.TotalSeconds >= 1)
+        {
+            return $"{duration.TotalSeconds:F3} s";
+        }
+
+        if (duration.TotalMilliseconds >= 1)
+        {
+            return $"{duration.TotalMilliseconds:F3} ms";
+        }
+
+        return $"{(duration.TotalMilliseconds * 1000):F3} us";
     }
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
