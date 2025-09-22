@@ -1,1 +1,10 @@
-.idea
+# Build artifacts
+bin/
+obj/
+**/bin/
+**/obj/
+
+# IDE
+.idea/
+*.user
+*.DotSettings.user
