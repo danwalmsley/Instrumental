@@ -17,12 +17,13 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
     private readonly Dictionary<string, TimelineTrack> _tracksByName = new(StringComparer.OrdinalIgnoreCase);
     private const double HistoryRetentionMultiplier = 4;
     public static readonly TimeSpan MinimumVisibleDuration = TimeSpan.FromMilliseconds(5);
-    public static readonly TimeSpan MaximumVisibleDuration = TimeSpan.FromHours(1);
+    public static readonly TimeSpan MaximumVisibleDuration = TimeSpan.FromSeconds(30);
 
     private readonly DispatcherTimer _timer;
     private readonly TimeSpan _defaultVisibleDuration = TimeSpan.FromSeconds(30);
 
     private DateTimeOffset _currentTime;
+    private DateTimeOffset _viewportEnd;
     private TimeSpan _visibleDuration;
     private bool _isCapturing;
     private bool _isLive = true;
@@ -32,8 +33,9 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
     public TimelineViewModel()
     {
         _currentTime = DateTimeOffset.UtcNow;
+        _viewportEnd = _currentTime;
         _visibleDuration = _defaultVisibleDuration;
-        _timer = new DispatcherTimer(TimeSpan.FromMilliseconds(33), DispatcherPriority.Render, (_, _) => CurrentTime = DateTimeOffset.UtcNow);
+        _timer = new DispatcherTimer(TimeSpan.FromMilliseconds(33), DispatcherPriority.Render, OnTick);
         _timer.Start();
     }
 
@@ -48,10 +50,6 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
             if (SetProperty(ref _visibleDuration, clamped))
             {
                 OnPropertyChanged(nameof(RetainedDuration));
-                if (IsCapturing)
-                {
-                    TrimOutOfRange(CurrentTime - RetainedDuration);
-                }
             }
         }
     }
@@ -62,6 +60,12 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
     {
         get => _currentTime;
         private set => SetProperty(ref _currentTime, value);
+    }
+
+    public DateTimeOffset ViewportEnd
+    {
+        get => _viewportEnd;
+        private set => SetProperty(ref _viewportEnd, value);
     }
 
     public bool IsCapturing
@@ -123,7 +127,6 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
             InsertEventOrdered(track.Events, timelineEvent);
         }
 
-        TrimOutOfRange(timestamp - RetainedDuration);
     }
 
     public void ApplyEventStop(Guid eventId, DateTimeOffset timestamp)
@@ -132,43 +135,6 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
         {
             timelineEvent.Complete(timestamp);
         }
-    }
-
-    public void TrimOutOfRange(DateTimeOffset olderThan)
-    {
-        if (!IsCapturing)
-        {
-            return;
-        }
-
-        foreach (var track in Tracks)
-        {
-            TrimCollection(track.Events, olderThan);
-        }
-    }
-
-    private void TrimCollection(ICollection<TimelineEvent> events, DateTimeOffset olderThan)
-    {
-        var snapshot = events.ToList();
-        foreach (var evt in snapshot)
-        {
-            if ((evt.End ?? CurrentTime) < olderThan)
-            {
-                RemoveEvent(evt);
-            }
-            else if (evt.Children.Count > 0)
-            {
-                TrimCollection(evt.Children, olderThan);
-            }
-        }
-    }
-
-    private void RemoveEvent(TimelineEvent timelineEvent)
-    {
-        RemoveEventFromContainers(timelineEvent);
-        _eventsById.Remove(timelineEvent.Id);
-        _eventParentById.Remove(timelineEvent.Id);
-        _eventTrackById.Remove(timelineEvent.Id);
     }
 
     private void RemoveEventFromContainers(TimelineEvent timelineEvent)
@@ -188,6 +154,14 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
         {
             RemoveEvent(child);
         }
+    }
+
+    private void RemoveEvent(TimelineEvent timelineEvent)
+    {
+        RemoveEventFromContainers(timelineEvent);
+        _eventsById.Remove(timelineEvent.Id);
+        _eventParentById.Remove(timelineEvent.Id);
+        _eventTrackById.Remove(timelineEvent.Id);
     }
 
     private static void InsertEventOrdered(IList<TimelineEvent> collection, TimelineEvent timelineEvent)
@@ -225,11 +199,9 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
 
     public void StartCapture()
     {
-        ClearAllEvents();
         CaptureStartTime = DateTimeOffset.UtcNow;
         CaptureEndTime = null;
         IsCapturing = true;
-        GoLive();
     }
 
     public void StopCapture()
@@ -244,37 +216,38 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
 
         if (CaptureEndTime is { } end)
         {
-            CurrentTime = end;
+            ViewportEnd = end;
         }
 
         PauseLive();
     }
 
+    public void ClearTimeline()
+    {
+        ClearAllEvents();
+        IsCapturing = false;
+        CaptureStartTime = null;
+        CaptureEndTime = null;
+        GoLive();
+    }
+
     public void GoLive()
     {
+        var now = DateTimeOffset.UtcNow;
+        CurrentTime = now;
+        ViewportEnd = now;
         IsLive = true;
-        if (!_timer.IsEnabled)
-        {
-            _timer.Start();
-        }
-
-        CurrentTime = DateTimeOffset.UtcNow;
     }
 
     public void PauseLive()
     {
-        if (_timer.IsEnabled)
-        {
-            _timer.Stop();
-        }
-
         IsLive = false;
     }
 
     public void SetPlaybackTime(DateTimeOffset timestamp)
     {
         PauseLive();
-        CurrentTime = timestamp;
+        ViewportEnd = timestamp;
     }
 
     public void AdjustZoom(double scale)
@@ -285,12 +258,31 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
         }
 
         var targetTicks = Math.Max(1L, (long)Math.Round(VisibleDuration.Ticks * scale, MidpointRounding.AwayFromZero));
-        VisibleDuration = TimeSpan.FromTicks(targetTicks);
+        var newDuration = TimeSpan.FromTicks(targetTicks);
+        newDuration = ClampVisibleDuration(newDuration);
+
+        var restoreLive = newDuration >= _defaultVisibleDuration;
+
+        VisibleDuration = newDuration;
+
+        if (restoreLive)
+        {
+            GoLive();
+            return;
+        }
+
+        IsLive = false;
+
+        var bounds = GetTimelineBoundsCore();
+        var windowStart = ViewportEnd - VisibleDuration;
+        var clamped = ClampWindowToBounds(windowStart, ViewportEnd, bounds);
+        ViewportEnd = clamped.End;
     }
 
     public void ResetZoom()
     {
         VisibleDuration = _defaultVisibleDuration;
+        GoLive();
     }
 
     public void PanViewport(double ratio)
@@ -316,7 +308,7 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
             return;
         }
 
-        PauseLive();
+        IsLive = false;
 
         var bounds = GetTimelineBoundsCore();
         var maxEnd = bounds.End;
@@ -326,19 +318,17 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
             minEnd = maxEnd;
         }
 
-        var candidate = CurrentTime + delta;
+        var candidate = ViewportEnd + delta;
         candidate = Clamp(candidate, minEnd, maxEnd);
-        CurrentTime = candidate;
+        ViewportEnd = candidate;
     }
 
-    public void ZoomAround(DateTimeOffset anchor, double scale)
+    public void ZoomAround(DateTimeOffset anchor, double scale, double offsetWithinWindow = 0.5)
     {
         if (scale <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(scale));
         }
-
-        PauseLive();
 
         var oldDuration = VisibleDuration;
         var newDurationTicks = (long)Math.Round(oldDuration.Ticks * scale, MidpointRounding.AwayFromZero);
@@ -346,21 +336,27 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
         var newDuration = TimeSpan.FromTicks(newDurationTicks);
         newDuration = ClampVisibleDuration(newDuration);
 
-        var bounds = GetTimelineBoundsCore();
-        var windowStart = CurrentTime - oldDuration;
+        var restoreLive = newDuration >= _defaultVisibleDuration;
 
+        var bounds = GetTimelineBoundsCore();
         anchor = Clamp(anchor, bounds.Start, bounds.End);
-        var totalMillis = oldDuration.TotalMilliseconds;
-        var positionRatio = totalMillis <= 0 ? 0.5 : (anchor - windowStart).TotalMilliseconds / totalMillis;
-        positionRatio = double.IsNaN(positionRatio) ? 0.5 : Math.Clamp(positionRatio, 0, 1);
+        offsetWithinWindow = double.IsNaN(offsetWithinWindow) ? 0.5 : Math.Clamp(offsetWithinWindow, 0, 1);
 
         VisibleDuration = newDuration;
 
-        var newStart = anchor - TimeSpan.FromMilliseconds(newDuration.TotalMilliseconds * positionRatio);
+        if (restoreLive)
+        {
+            GoLive();
+            return;
+        }
+
+        IsLive = false;
+
+        var newStart = anchor - TimeSpan.FromMilliseconds(newDuration.TotalMilliseconds * offsetWithinWindow);
         var newEnd = newStart + newDuration;
 
         var clamped = ClampWindowToBounds(newStart, newEnd, bounds);
-        CurrentTime = clamped.End;
+        ViewportEnd = clamped.End;
     }
 
     public (DateTimeOffset Start, DateTimeOffset End) GetTimelineBounds()
@@ -370,10 +366,10 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
 
     public void MoveViewport(DateTimeOffset windowStart)
     {
-        PauseLive();
+        IsLive = false;
         var bounds = GetTimelineBoundsCore();
         var clamped = ClampWindowToBounds(windowStart, windowStart + VisibleDuration, bounds);
-        CurrentTime = clamped.End;
+        ViewportEnd = clamped.End;
     }
 
     private DateTimeOffset GetLatestTimestamp()
@@ -395,22 +391,38 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
             latestEnd = captureEnd;
         }
 
+        var now = DateTimeOffset.UtcNow;
+        if (latestEnd < now)
+        {
+            latestEnd = now;
+        }
+
         return latestEnd;
     }
 
     private DateTimeOffset GetEarliestTimestamp()
     {
-        if (_eventsById.Count > 0)
-        {
-            return _eventsById.Values.Min(e => e.Start);
-        }
+        DateTimeOffset? earliest = null;
 
         if (CaptureStartTime is { } captureStart)
         {
-            return captureStart;
+            earliest = captureStart;
         }
 
-        return CurrentTime - VisibleDuration;
+        if (_eventsById.Count > 0)
+        {
+            var firstEvent = _eventsById.Values.Min(e => e.Start);
+            if (earliest is null)
+            {
+                earliest = firstEvent;
+            }
+            else if (CaptureStartTime is null && firstEvent < earliest.Value)
+            {
+                earliest = firstEvent;
+            }
+        }
+
+        return earliest ?? ViewportEnd - VisibleDuration;
     }
 
     private (DateTimeOffset Start, DateTimeOffset End) GetTimelineBoundsCore()
@@ -508,5 +520,15 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
         }
 
         return duration;
+    }
+
+    private void OnTick(object? sender, EventArgs e)
+    {
+        var now = DateTimeOffset.UtcNow;
+        CurrentTime = now;
+        if (IsLive)
+        {
+            ViewportEnd = now;
+        }
     }
 }

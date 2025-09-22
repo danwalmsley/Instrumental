@@ -781,8 +781,10 @@ public class RealtimeTimelineControl : Control
         var position = e.GetPosition(this);
         var windowStart = CurrentTime - VisibleDuration;
         var anchor = XToTime(position.X, windowStart, CurrentTime, Bounds.Width);
+        var offsetRatio = Bounds.Width > 0 ? position.X / Bounds.Width : 0.5;
+        offsetRatio = Math.Clamp(offsetRatio, 0, 1);
         var scale = delta > 0 ? 0.8 : 1.25;
-        timeline.ZoomAround(anchor, scale);
+        timeline.ZoomAround(anchor, scale, offsetRatio);
         e.Handled = true;
     }
 

@@ -25,6 +25,10 @@
                     Command="{Binding StopCaptureCommand}"
                     MinWidth="110"/>
             <Separator Margin="4,0" Width="1" Background="#40FFFFFF"/>
+            <Button Content="Clear"
+                    Command="{Binding ClearCommand}"
+                    MinWidth="80"/>
+            <Separator Margin="4,0" Width="1" Background="#40FFFFFF"/>
             <Button Content="Zoom In"
                     Command="{Binding ZoomInCommand}"
                     MinWidth="80"/>
@@ -34,6 +38,9 @@
             <Button Content="Reset Zoom"
                     Command="{Binding ResetZoomCommand}"
                     MinWidth="100"/>
+            <Button Content="Go Live"
+                    Command="{Binding GoLiveCommand}"
+                    MinWidth="90"/>
             <Separator Margin="4,0" Width="1" Background="#40FFFFFF"/>
             <Button Content="Run Demo"
                     Command="{Binding RunDemoCommand}"
@@ -42,7 +49,7 @@
 
         <controls:RealtimeTimelineControl Grid.Row="1"
                                           Tracks="{Binding Timeline.Tracks}"
-                                          CurrentTime="{Binding Timeline.CurrentTime}"
+                                          CurrentTime="{Binding Timeline.ViewportEnd}"
                                           VisibleDuration="{Binding Timeline.VisibleDuration}"
                                           Timeline="{Binding Timeline}"
                                           Margin="12"

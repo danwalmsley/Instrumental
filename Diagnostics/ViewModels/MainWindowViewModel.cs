@@ -34,6 +34,8 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
         ZoomInCommand = CreateCommand(() => Timeline.AdjustZoom(0.5));
         ZoomOutCommand = CreateCommand(() => Timeline.AdjustZoom(2.0));
         ResetZoomCommand = CreateCommand(Timeline.ResetZoom);
+        GoLiveCommand = CreateCommand(Timeline.GoLive, () => !Timeline.IsLive, nameof(TimelineViewModel.IsLive));
+        ClearCommand = CreateCommand(Timeline.ClearTimeline);
 
         if (Design.IsDesignMode)
         {
@@ -63,6 +65,8 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
     public ICommand ZoomInCommand { get; }
     public ICommand ZoomOutCommand { get; }
     public ICommand ResetZoomCommand { get; }
+    public ICommand GoLiveCommand { get; }
+    public ICommand ClearCommand { get; }
 
     private void SeedDesignTimeData()
     {
