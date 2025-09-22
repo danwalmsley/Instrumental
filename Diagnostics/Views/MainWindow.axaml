@@ -1,0 +1,34 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Diagnostics.ViewModels"
+        xmlns:controls="clr-namespace:Diagnostics.Controls"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        x:Class="Diagnostics.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Icon="/Assets/avalonia-logo.ico"
+        Title="Diagnostics">
+
+    <Design.DataContext>
+        <!-- This only sets the DataContext for the previewer in an IDE,
+             to set the actual DataContext for runtime, set the DataContext property in code (look at App.axaml.cs) -->
+        <vm:MainWindowViewModel/>
+    </Design.DataContext>
+
+    <Grid RowDefinitions="Auto,*">
+        <StackPanel Orientation="Horizontal" Margin="12" Spacing="8">
+            <Button Content="Run Demo"
+                    Command="{Binding RunDemoCommand}"
+                    MinWidth="100"/>
+        </StackPanel>
+
+        <controls:RealtimeTimelineControl Grid.Row="1"
+                                          Tracks="{Binding Timeline.Tracks}"
+                                          CurrentTime="{Binding Timeline.CurrentTime}"
+                                          VisibleDuration="{Binding Timeline.VisibleDuration}"
+                                          Margin="12"
+                                          Background="#FF1E1E1E"/>
+    </Grid>
+
+</Window>
