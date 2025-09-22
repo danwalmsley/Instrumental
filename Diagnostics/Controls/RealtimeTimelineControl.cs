@@ -21,6 +21,7 @@ public class RealtimeTimelineControl : Control
     private const double MinVerticalLabelFontSize = 8;
     private const double MaxVerticalLabelFontSize = 12;
     private const double SummaryHeight = 64;
+    private const double SummarySpacing = 8;
     private const double SummaryTickLabelHeight = 16;
     private const double SummaryWindowMinWidth = 6;
 
@@ -32,7 +33,7 @@ public class RealtimeTimelineControl : Control
     private static readonly Pen TrackSeparatorPen = new(new ImmutableSolidColorBrush(Color.FromArgb(32, 255, 255, 255)), 1);
     private static readonly Pen GridPen = new(new ImmutableSolidColorBrush(Color.FromArgb(48, 255, 255, 255)), 1);
     private static readonly Pen CurrentTimePen = new(new ImmutableSolidColorBrush(Color.FromArgb(192, 255, 140, 0)), 2);
-    private static readonly ImmutableSolidColorBrush SummaryBackgroundBrush = new(Color.FromArgb(24, 255, 255, 255));
+    private static readonly ImmutableSolidColorBrush SummaryBackgroundBrush = new(Color.FromArgb(255, 30, 30, 30));
     private static readonly Pen SummaryBorderPen = new(new ImmutableSolidColorBrush(Color.FromArgb(64, 255, 255, 255)), 1);
     private static readonly ImmutableSolidColorBrush SummaryWindowFill = new(Color.FromArgb(48, 255, 255, 255));
     private static readonly Pen SummaryWindowPen = new(new ImmutableSolidColorBrush(Color.FromArgb(160, 255, 255, 255)), 1.5);
@@ -275,7 +276,7 @@ public class RealtimeTimelineControl : Control
 
         var tracks = Tracks;
         var trackCount = tracks?.Count ?? 0;
-        var contentHeight = Math.Max(0, height - SummaryHeight);
+        var contentHeight = Math.Max(0, height - SummaryHeight - SummarySpacing);
         if (trackCount > 0 && tracks is not null)
         {
             var totalLabelHeight = TrackLabelAreaHeight * trackCount;
@@ -296,7 +297,8 @@ public class RealtimeTimelineControl : Control
 
         DrawCurrentTimeIndicator(context, windowStart, now, width, contentHeight);
 
-        var summaryBounds = new Rect(0, contentHeight, width, Math.Max(0, height - contentHeight));
+        var summaryTop = contentHeight + SummarySpacing;
+        var summaryBounds = new Rect(0, summaryTop, width, Math.Max(0, height - summaryTop));
         _summaryBounds = summaryBounds;
         DrawSummaryTimeline(context, summaryBounds, windowStart, now);
     }
