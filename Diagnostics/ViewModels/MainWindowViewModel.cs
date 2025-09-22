@@ -8,6 +8,8 @@ using System.Windows.Input;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+using Avalonia.Platform;
+using Avalonia.Rendering;
 using Diagnostics.EventBroadcast;
 using Diagnostics.EventBroadcast.Messaging;
 using Diagnostics.Services;
@@ -132,7 +134,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
         DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 
-    public Task BroadcastStartAsync(string track, string label, Color color, Guid? eventId = null, Guid? parentId = null, DateTimeOffset? timestamp = null, CancellationToken cancellationToken = default, bool applyLocally = true)
+    public Guid BroadcastStart(string track, string label, Color color, Guid? eventId = null, Guid? parentId = null, DateTimeOffset? timestamp = null, bool applyLocally = true)
     {
         if (string.IsNullOrWhiteSpace(track))
         {
@@ -152,17 +154,17 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
             Timeline.ApplyEventStart(id, track, timestampValue, label, color, parentId);
         }
 
-        if (_broadcaster is null)
+        if (_broadcaster is not null)
         {
-            return Task.CompletedTask;
+            var colorHex = ToHex(color);
+            var start = new TimelineEventStart(id, track, label, colorHex, timestampValue, parentId);
+            _broadcaster.EnqueueStart(start);
         }
 
-        var colorHex = ToHex(color);
-        var start = new TimelineEventStart(id, track, label, colorHex, timestampValue, parentId);
-        return _broadcaster.SendStartAsync(start, cancellationToken);
+        return id;
     }
 
-    public Task BroadcastStopAsync(Guid eventId, DateTimeOffset? timestamp = null, CancellationToken cancellationToken = default, bool applyLocally = true)
+    public void BroadcastStop(Guid eventId, DateTimeOffset? timestamp = null, bool applyLocally = true)
     {
         var timestampValue = timestamp ?? DateTimeOffset.UtcNow;
 
@@ -171,13 +173,11 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
             Timeline.ApplyEventStop(eventId, timestampValue);
         }
 
-        if (_broadcaster is null)
+        if (_broadcaster is not null)
         {
-            return Task.CompletedTask;
+            var stop = new TimelineEventStop(eventId, timestampValue);
+            _broadcaster.EnqueueStop(stop);
         }
-
-        var stop = new TimelineEventStop(eventId, timestampValue);
-        return _broadcaster.SendStopAsync(stop, cancellationToken);
     }
 
     private async Task RunDemoAsync(CancellationToken cancellationToken)
@@ -209,72 +209,59 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
         }
     }
 
+    private long _renderTickCounter;
+
     private async Task RunDemoInternalAsync(CancellationToken cancellationToken)
     {
-        var activeEvents = new HashSet<Guid>();
-
-        async Task<Guid> StartEventAsync(string track, string label, Color color, Guid? parentId = null)
+        var renderTimer = GetRequiredService<IRenderTimer>();
+        if (renderTimer is null)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var id = Guid.NewGuid();
-            await BroadcastStartAsync(track, label, color, id, parentId, DateTimeOffset.UtcNow, CancellationToken.None, applyLocally: false).ConfigureAwait(false);
-            activeEvents.Add(id);
-            return id;
+            throw new InvalidOperationException("IRenderTimer service is not available.");
         }
 
-        async Task StopEventAsync(Guid id)
+        _renderTickCounter = 0;
+        var renderTrack = "Render Loop";
+        Guid? lastRenderEventId = null;
+
+        void OnRender(TimeSpan _)
         {
-            if (activeEvents.Remove(id))
+            if (cancellationToken.IsCancellationRequested)
             {
-                await BroadcastStopAsync(id, DateTimeOffset.UtcNow, CancellationToken.None, applyLocally: false).ConfigureAwait(false);
+                return;
             }
+
+            var now = DateTimeOffset.UtcNow;
+
+            if (lastRenderEventId is { } previousId)
+            {
+                BroadcastStop(previousId, now, applyLocally: false);
+            }
+
+            var tick = Interlocked.Increment(ref _renderTickCounter);
+            lastRenderEventId = BroadcastStart(renderTrack, $"Render Tick {tick}", Colors.LightSkyBlue, Guid.NewGuid(), null, now, applyLocally: false);
         }
+
+        renderTimer.Tick += OnRender;
 
         try
         {
-            var parentId = await StartEventAsync("Demo", "Demo Operation", Colors.SlateBlue).ConfigureAwait(false);
-            await Task.Delay(TimeSpan.FromMilliseconds(300), cancellationToken).ConfigureAwait(false);
-
-            var ioId = await StartEventAsync("Demo", "Disk IO", Colors.OrangeRed, parentId).ConfigureAwait(false);
-            await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken).ConfigureAwait(false);
-
-            var cpuId = await StartEventAsync("Demo", "CPU Work", Colors.SeaGreen, parentId).ConfigureAwait(false);
-            await Task.Delay(TimeSpan.FromMilliseconds(600), cancellationToken).ConfigureAwait(false);
-
-            await StopEventAsync(ioId).ConfigureAwait(false);
-            await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken).ConfigureAwait(false);
-
-            var uiId = await StartEventAsync("Demo", "UI Thread", Colors.Gold, parentId).ConfigureAwait(false);
-            await Task.Delay(TimeSpan.FromMilliseconds(450), cancellationToken).ConfigureAwait(false);
-
-            await StopEventAsync(cpuId).ConfigureAwait(false);
-            await Task.Delay(TimeSpan.FromMilliseconds(400), cancellationToken).ConfigureAwait(false);
-
-            await StopEventAsync(uiId).ConfigureAwait(false);
-            await Task.Delay(TimeSpan.FromMilliseconds(200), cancellationToken).ConfigureAwait(false);
-
-            await StopEventAsync(parentId).ConfigureAwait(false);
-
-            await Task.Delay(TimeSpan.FromMilliseconds(150), cancellationToken).ConfigureAwait(false);
-
-            var backgroundId = await StartEventAsync("Background", "Telemetry", Colors.MediumOrchid).ConfigureAwait(false);
-            await Task.Delay(TimeSpan.FromMilliseconds(2000), cancellationToken).ConfigureAwait(false);
-            await StopEventAsync(backgroundId).ConfigureAwait(false);
+            await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // Demo cancelled by user; cleanup happens below.
+            // expected when cancelled
         }
         finally
         {
-            var remaining = new List<Guid>(activeEvents);
-            foreach (var id in remaining)
+            renderTimer.Tick -= OnRender;
+
+            if (lastRenderEventId is { } finalId)
             {
-                activeEvents.Remove(id);
-                await BroadcastStopAsync(id, DateTimeOffset.UtcNow, CancellationToken.None, applyLocally: false).ConfigureAwait(false);
+                BroadcastStop(finalId, DateTimeOffset.UtcNow, applyLocally: false);
             }
         }
     }
+
 
     private void CancelDemo()
     {
@@ -317,5 +304,10 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
         }
 
         return command;
+    }
+
+    private static T GetRequiredService<T>() where T : class
+    {
+        return (T)(AvaloniaLocator.Current.GetService(typeof(T)) ?? throw new InvalidOperationException($"Service of type {typeof(T)} not found."));
     }
 }

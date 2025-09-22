@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
@@ -12,6 +13,10 @@ public sealed class TimelineEventBroadcaster : IAsyncDisposable, IDisposable
 {
     private readonly UdpClient _udpClient;
     private readonly IPEndPoint _broadcastEndpoint;
+    private readonly ConcurrentQueue<TimelineEventMessage> _queue = new();
+    private readonly CancellationTokenSource _cts = new();
+    private readonly Task _processingTask;
+    private readonly TimeSpan _flushInterval;
     private bool _disposed;
 
     public TimelineEventBroadcaster(TimelineEventBroadcasterOptions? options = null)
@@ -34,27 +39,69 @@ public sealed class TimelineEventBroadcaster : IAsyncDisposable, IDisposable
         }
 
         _broadcastEndpoint = new IPEndPoint(options.BroadcastAddress, options.Port);
+        _flushInterval = options.FlushInterval <= TimeSpan.Zero
+            ? TimeSpan.FromMilliseconds(100)
+            : options.FlushInterval;
+
+        _processingTask = Task.Run(() => ProcessQueueAsync(_cts.Token));
     }
 
-    public Task SendStartAsync(TimelineEventStart start, CancellationToken cancellationToken = default)
+    public void EnqueueStart(TimelineEventStart start)
     {
         ArgumentNullException.ThrowIfNull(start);
-        return SendAsync(TimelineEventMessage.CreateStart(start), cancellationToken);
+        EnqueueMessage(TimelineEventMessage.CreateStart(start));
     }
 
-    public Task SendStopAsync(TimelineEventStop stop, CancellationToken cancellationToken = default)
+    public void EnqueueStop(TimelineEventStop stop)
     {
         ArgumentNullException.ThrowIfNull(stop);
-        return SendAsync(TimelineEventMessage.CreateStop(stop), cancellationToken);
+        EnqueueMessage(TimelineEventMessage.CreateStop(stop));
     }
 
-    private async Task SendAsync(TimelineEventMessage message, CancellationToken cancellationToken)
+    private void EnqueueMessage(TimelineEventMessage message)
     {
         ThrowIfDisposed();
-        cancellationToken.ThrowIfCancellationRequested();
+        _queue.Enqueue(message);
+    }
 
-        var buffer = JsonSerializer.SerializeToUtf8Bytes(message, TimelineEventSerializer.Options);
-        await _udpClient.SendAsync(buffer, buffer.Length, _broadcastEndpoint).WaitAsync(cancellationToken);
+    private async Task ProcessQueueAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(_flushInterval, cancellationToken).ConfigureAwait(false);
+                await FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // expected during disposal
+        }
+        finally
+        {
+            await FlushAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+    }
+
+    private async Task FlushAsync(CancellationToken cancellationToken)
+    {
+        if (_queue.IsEmpty)
+        {
+            return;
+        }
+
+        var client = _udpClient;
+        if (client is null)
+        {
+            return;
+        }
+
+        while (_queue.TryDequeue(out var message))
+        {
+            var buffer = JsonSerializer.SerializeToUtf8Bytes(message, TimelineEventSerializer.Options);
+            await client.SendAsync(buffer, buffer.Length, _broadcastEndpoint).WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private void ThrowIfDisposed()
@@ -65,21 +112,32 @@ public sealed class TimelineEventBroadcaster : IAsyncDisposable, IDisposable
         }
     }
 
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         if (_disposed)
         {
-            return ValueTask.CompletedTask;
+            return;
         }
 
         _disposed = true;
+        _cts.Cancel();
+
+        try
+        {
+            await _processingTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // expected during shutdown
+        }
+
         _udpClient.Dispose();
-        return ValueTask.CompletedTask;
+        _cts.Dispose();
     }
 
     public void Dispose()
     {
-        _ = DisposeAsync();
+        DisposeAsync().AsTask().GetAwaiter().GetResult();
         GC.SuppressFinalize(this);
     }
 }

@@ -12,4 +12,6 @@ public sealed class TimelineEventBroadcasterOptions
     public int Port { get; init; } = DefaultPort;
 
     public TimeSpan? SocketSendTimeout { get; init; }
+
+    public TimeSpan FlushInterval { get; init; } = TimeSpan.FromMilliseconds(100);
 }
