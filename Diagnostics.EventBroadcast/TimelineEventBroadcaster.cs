@@ -3,7 +3,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Diagnostics.EventBroadcast.Messaging;
@@ -79,6 +78,10 @@ public sealed class TimelineEventBroadcaster : IAsyncDisposable, IDisposable
         {
             // expected during disposal
         }
+        catch (Exception ex)
+        {
+            
+        }
         finally
         {
             await FlushAsync(CancellationToken.None).ConfigureAwait(false);
@@ -109,7 +112,7 @@ public sealed class TimelineEventBroadcaster : IAsyncDisposable, IDisposable
             return;
         }
 
-        var buffer = JsonSerializer.SerializeToUtf8Bytes(batch, TimelineEventSerializer.Options);
+        var buffer = TimelineEventSerializer.SerializeBatch(batch);
         await client.SendAsync(buffer, buffer.Length, _broadcastEndpoint).WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 

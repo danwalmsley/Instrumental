@@ -363,10 +363,110 @@ public class RealtimeTimelineControl : Control
             return;
         }
 
-        foreach (var timelineEvent in track.Events)
+        // Apply level-of-detail filtering based on zoom level and event count
+        var eventsToRender = GetEventsForLevelOfDetail(track.Events, windowStart, windowEnd, width);
+        
+        foreach (var timelineEvent in eventsToRender)
         {
             DrawEvent(context, timelineEvent, windowStart, windowEnd, width, trackBounds, labelArea, depth: 0);
         }
+    }
+
+    // Level-of-detail constants
+    private const int MaxEventsToRender = 100;
+    private const int FullDetailThreshold = 50;
+    
+    /// <summary>
+    /// Gets a filtered list of events to render based on the current zoom level and viewport.
+    /// When there are many events, this applies level-of-detail filtering to maintain performance.
+    /// At detailed zoom levels (50ms tick spacing or less), shows all visible events without sampling.
+    /// </summary>
+    private IEnumerable<TimelineEvent> GetEventsForLevelOfDetail(IList<TimelineEvent> allEvents, DateTimeOffset windowStart, DateTimeOffset windowEnd, double viewportWidth)
+    {
+        // Calculate the current zoom level based on visible duration
+        var visibleDuration = windowEnd - windowStart;
+        var totalSeconds = visibleDuration.TotalSeconds;
+        
+        // Calculate what the grid step would be at this zoom level
+        var targetLines = (int)Math.Clamp(totalSeconds, 10, 60);
+        var gridStepSeconds = CalculateGridStep(totalSeconds, targetLines);
+        
+        // If grid lines represent 50ms or less, we're at high detail - show all visible events
+        const double detailThresholdSeconds = 0.05; // 50ms
+        if (gridStepSeconds <= detailThresholdSeconds)
+        {
+            // At high zoom levels, only filter by visibility - no sampling
+            return allEvents.Where(evt => IsEventVisible(evt, windowStart, windowEnd));
+        }
+
+        // At lower zoom levels, apply the existing LOD logic
+        if (allEvents.Count <= FullDetailThreshold)
+        {
+            // If we have few events, render them all
+            return allEvents.Where(evt => IsEventVisible(evt, windowStart, windowEnd));
+        }
+
+        // Filter to only events that are visible in the current viewport
+        var visibleEvents = allEvents.Where(evt => IsEventVisible(evt, windowStart, windowEnd)).ToList();
+        
+        if (visibleEvents.Count <= MaxEventsToRender)
+        {
+            // If visible events are within our limit, render them all
+            return visibleEvents;
+        }
+
+        // Apply level-of-detail sampling
+        return ApplyLevelOfDetailSampling(visibleEvents, windowStart, windowEnd, viewportWidth);
+    }
+    
+    /// <summary>
+    /// Checks if an event is visible within the current viewport time range
+    /// </summary>
+    private static bool IsEventVisible(TimelineEvent evt, DateTimeOffset windowStart, DateTimeOffset windowEnd)
+    {
+        var eventEnd = evt.End ?? windowEnd;
+        return evt.Start < windowEnd && eventEnd > windowStart;
+    }
+    
+    /// <summary>
+    /// Applies intelligent sampling to reduce the number of events to render while maintaining visual representation
+    /// </summary>
+    private IEnumerable<TimelineEvent> ApplyLevelOfDetailSampling(List<TimelineEvent> visibleEvents, DateTimeOffset windowStart, DateTimeOffset windowEnd, double viewportWidth)
+    {
+        // Calculate how many pixels each event would need to be clearly visible
+        const double minPixelsPerEvent = 2.0; // Minimum pixels needed to see an event
+        var maxEventsForPixelDensity = (int)(viewportWidth / minPixelsPerEvent);
+        var targetEventCount = Math.Min(MaxEventsToRender, Math.Max(10, maxEventsForPixelDensity));
+        
+        if (visibleEvents.Count <= targetEventCount)
+        {
+            return visibleEvents;
+        }
+
+        // Sort events by start time
+        var sortedEvents = visibleEvents.OrderBy(evt => evt.Start).ToList();
+        
+        // Use systematic sampling to get a representative subset
+        var samplingRatio = (double)sortedEvents.Count / targetEventCount;
+        var sampledEvents = new List<TimelineEvent>(targetEventCount);
+        
+        for (int i = 0; i < targetEventCount && i < sortedEvents.Count; i++)
+        {
+            var index = (int)(i * samplingRatio);
+            if (index < sortedEvents.Count)
+            {
+                sampledEvents.Add(sortedEvents[index]);
+            }
+        }
+        
+        // Always include the most recent events to maintain real-time feel
+        var recentEventCount = Math.Min(10, sortedEvents.Count / 10);
+        var recentEvents = sortedEvents.TakeLast(recentEventCount);
+        
+        // Combine sampled events with recent events, removing duplicates
+        var result = sampledEvents.Concat(recentEvents).Distinct().OrderBy(evt => evt.Start);
+        
+        return result;
     }
 
     private void DrawEvent(DrawingContext context, TimelineEvent timelineEvent, DateTimeOffset windowStart, DateTimeOffset windowEnd, double width, Rect availableBounds, Rect labelArea, int depth)

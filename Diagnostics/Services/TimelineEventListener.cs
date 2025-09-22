@@ -1,7 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
@@ -15,7 +15,6 @@ public sealed class TimelineEventListener : IAsyncDisposable, IDisposable
 {
     private readonly TimelineViewModel _timeline;
     private readonly TimelineEventListenerOptions _options;
-    private readonly JsonSerializerOptions _serializerOptions;
     private CancellationTokenSource? _cts;
     private Task? _receiveLoop;
     private UdpClient? _udpClient;
@@ -25,7 +24,6 @@ public sealed class TimelineEventListener : IAsyncDisposable, IDisposable
     {
         _timeline = timeline ?? throw new ArgumentNullException(nameof(timeline));
         _options = options ?? new TimelineEventListenerOptions();
-        _serializerOptions = TimelineEventSerializer.Options;
     }
 
     public void Start()
@@ -94,51 +92,27 @@ public sealed class TimelineEventListener : IAsyncDisposable, IDisposable
                 continue;
             }
 
-            TimelineEventMessage? singleMessage = null;
-            TimelineEventMessage[]? batch = null;
+            List<TimelineEventMessage>? messages = null;
             try
             {
-                var buffer = result.Buffer;
-                var index = 0;
-                while (index < buffer.Length && char.IsWhiteSpace((char)buffer[index]))
-                {
-                    index++;
-                }
-
-                var isArray = index < buffer.Length && buffer[index] == '[';
-                if (isArray)
-                {
-                    batch = JsonSerializer.Deserialize<TimelineEventMessage[]>(buffer, _serializerOptions);
-                }
-                else
-                {
-                    singleMessage = JsonSerializer.Deserialize<TimelineEventMessage>(buffer, _serializerOptions);
-                }
+                // Deserialize binary format
+                messages = TimelineEventSerializer.DeserializeBatch(result.Buffer);
             }
-            catch (JsonException)
+            catch (Exception)
             {
                 // Ignore invalid payloads
             }
 
-            if (batch is { Length: > 0 })
+            if (messages is { Count: > 0 })
             {
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
-                    foreach (var message in batch)
+                    foreach (var message in messages)
                     {
                         ApplyMessage(message);
                     }
                 }, DispatcherPriority.Background);
-
-                continue;
             }
-
-            if (singleMessage is null)
-            {
-                continue;
-            }
-
-            await Dispatcher.UIThread.InvokeAsync(() => ApplyMessage(singleMessage), DispatcherPriority.Background);
         }
     }
 

@@ -10,6 +10,7 @@ using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Platform;
 using Avalonia.Rendering;
+using Avalonia.Threading;
 using Diagnostics.EventBroadcast;
 using Diagnostics.EventBroadcast.Messaging;
 using Diagnostics.Services;
@@ -220,8 +221,12 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
         }
 
         _renderTickCounter = 0;
-        var renderTrack = "Render Loop";
-        Guid? lastRenderEventId = null;
+        var dispatcher = Dispatcher.UIThread;
+        var priorities = DispatcherPriorityHelper.OrderedPriorities;
+        Guid? activePriorityEventId = null;
+        Guid? activeRenderEventId = null;
+        const string renderTrack = "Render";
+        const string dispatcherTrack = "Dispatcher";
 
         void OnRender(TimeSpan _)
         {
@@ -231,21 +236,61 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
             }
 
             var now = DateTimeOffset.UtcNow;
-
-            if (lastRenderEventId is { } previousId)
+            if (activePriorityEventId is { } lingeringPriorityId)
             {
-                BroadcastStop(previousId, now, applyLocally: false);
+                BroadcastStop(lingeringPriorityId, now, applyLocally: false);
+                activePriorityEventId = null;
+            }
+
+            if (activeRenderEventId is { } previousRenderId)
+            {
+                BroadcastStop(previousRenderId, now, applyLocally: false);
+                activeRenderEventId = null;
             }
 
             var tick = Interlocked.Increment(ref _renderTickCounter);
-            lastRenderEventId = BroadcastStart(renderTrack, $"Render Tick {tick}", Colors.LightSkyBlue, Guid.NewGuid(), null, now, applyLocally: false);
+            
+            activeRenderEventId = BroadcastStart(renderTrack, $"Render Tick {tick}", Colors.Purple, Guid.NewGuid(), null, now, applyLocally: false);
+
+            foreach (var priority in priorities)
+            {
+                var localPriority = priority;
+                dispatcher.InvokeAsync(() =>
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
+                    var priorityNow = DateTimeOffset.UtcNow;
+
+                    if (activePriorityEventId is { } previousPriorityId)
+                    {
+                        BroadcastStop(previousPriorityId, priorityNow, applyLocally: false);
+                        activePriorityEventId = null;
+                    }
+
+                    var label = $"Tick {tick} - {localPriority}";
+                    var color = DispatcherPriorityHelper.ToColor(localPriority);
+                    activePriorityEventId = BroadcastStart(dispatcherTrack, label, color, Guid.NewGuid(), null, priorityNow, applyLocally: false);
+                }, priority);
+            }
+
+            dispatcher.InvokeAsync(() =>
+            {
+                if (activePriorityEventId is { } finalPriorityId)
+                {
+                    BroadcastStop(finalPriorityId, DateTimeOffset.UtcNow, applyLocally: false);
+                    activePriorityEventId = null;
+                }
+            }, DispatcherPriority.Send);
         }
 
         renderTimer.Tick += OnRender;
 
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+            await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -255,9 +300,16 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
         {
             renderTimer.Tick -= OnRender;
 
-            if (lastRenderEventId is { } finalId)
+            if (activePriorityEventId is { } finalPriorityId)
             {
-                BroadcastStop(finalId, DateTimeOffset.UtcNow, applyLocally: false);
+                BroadcastStop(finalPriorityId, DateTimeOffset.UtcNow, applyLocally: false);
+                activePriorityEventId = null;
+            }
+
+            if (activeRenderEventId is { } renderId)
+            {
+                BroadcastStop(renderId, DateTimeOffset.UtcNow, applyLocally: false);
+                activeRenderEventId = null;
             }
         }
     }
