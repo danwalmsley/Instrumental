@@ -42,6 +42,10 @@ public class RealtimeTimelineControl : Control
     private static readonly Pen SummaryWindowPen = new(new ImmutableSolidColorBrush(Color.FromArgb(160, 255, 255, 255)), 1.5);
     private static readonly Pen SummaryTickPen = new(new ImmutableSolidColorBrush(Color.FromArgb(72, 255, 255, 255)), 1);
     private static readonly ImmutableSolidColorBrush SummaryTextBrush = new(Color.FromArgb(200, 255, 255, 255));
+    private static readonly Pen MinorGridPen = new(new ImmutableSolidColorBrush(Color.FromArgb(24, 255, 255, 255)), 1);
+    private static readonly ImmutableSolidColorBrush ScaleLabelBackgroundBrush = new(Color.FromArgb(128, 0, 0, 0));
+    private const int OscilloscopeMajorDivisions = 10; // Standard number of time divisions across width
+    private const int OscilloscopeMinorSubdivisions = 5; // Minor subdivisions per major division
 
     private Rect _summaryBounds;
     private Rect _summaryWindowBounds;
@@ -64,6 +68,9 @@ public class RealtimeTimelineControl : Control
 
     public static readonly StyledProperty<TimelineViewModel?> TimelineProperty =
         AvaloniaProperty.Register<RealtimeTimelineControl, TimelineViewModel?>(nameof(Timeline));
+
+    public static readonly StyledProperty<double> InfoBarHeightProperty =
+        AvaloniaProperty.Register<RealtimeTimelineControl, double>(nameof(InfoBarHeight), 24d);
 
     static RealtimeTimelineControl()
     {
@@ -114,6 +121,12 @@ public class RealtimeTimelineControl : Control
     {
         get => GetValue(TimelineProperty);
         set => SetValue(TimelineProperty, value);
+    }
+
+    public double InfoBarHeight
+    {
+        get => GetValue(InfoBarHeightProperty);
+        set => SetValue(InfoBarHeightProperty, value);
     }
 
 
@@ -275,15 +288,22 @@ public class RealtimeTimelineControl : Control
         var background = this.Background ?? Brushes.Transparent;
         context.DrawRectangle(background, null, new Rect(Bounds.Size));
 
-        DrawTimeGrid(context, windowStart, now, visibleDuration, width, height);
+        // Total content height excluding summary section
+        var contentHeight = Math.Max(0, height - SummaryHeight - SummarySpacing);
+        var desiredInfoBarHeight = Math.Max(0, InfoBarHeight);
+        var infoBarHeight = Math.Min(desiredInfoBarHeight, contentHeight); // clamp if very small
+        var tracksContentHeight = Math.Max(0, contentHeight - infoBarHeight);
 
+        // Draw time grid only over track content area (not info bar)
+        DrawTimeGrid(context, windowStart, now, visibleDuration, width, tracksContentHeight);
+
+        // Layout tracks inside tracksContentHeight
         var tracks = Tracks;
         var trackCount = tracks?.Count ?? 0;
-        var contentHeight = Math.Max(0, height - SummaryHeight - SummarySpacing);
-        if (trackCount > 0 && tracks is not null)
+        if (trackCount > 0 && tracks is not null && tracksContentHeight > 0)
         {
             var totalLabelHeight = TrackLabelAreaHeight * trackCount;
-            var trackAreaHeight = Math.Max(0, contentHeight - totalLabelHeight);
+            var trackAreaHeight = Math.Max(0, tracksContentHeight - totalLabelHeight);
             var trackHeight = trackCount > 0 ? trackAreaHeight / trackCount : 0;
             var stride = trackHeight + TrackLabelAreaHeight;
             var top = 0d;
@@ -298,9 +318,16 @@ public class RealtimeTimelineControl : Control
             }
         }
 
-        DrawCurrentTimeIndicator(context, windowStart, now, width, contentHeight);
+        // Current time indicator spans only tracks+labels, not info bar
+        DrawCurrentTimeIndicator(context, windowStart, now, width, tracksContentHeight);
 
-        var summaryTop = contentHeight + SummarySpacing;
+        // Info bar rectangle directly after tracks content
+        var infoBarTop = tracksContentHeight;
+        var infoBarRect = new Rect(0, infoBarTop, width, infoBarHeight);
+        DrawInfoBar(context, infoBarRect, TimeSpan.FromTicks(visibleDuration.Ticks / OscilloscopeMajorDivisions));
+
+        // Summary below full content area (tracks + info bar)
+        var summaryTop = contentHeight + SummarySpacing; // contentHeight already includes info bar
         var summaryBounds = new Rect(0, summaryTop, width, Math.Max(0, height - summaryTop));
         _summaryBounds = summaryBounds;
         DrawSummaryTimeline(context, summaryBounds, windowStart, now);
@@ -308,46 +335,62 @@ public class RealtimeTimelineControl : Control
 
     private void DrawTimeGrid(DrawingContext context, DateTimeOffset windowStart, DateTimeOffset windowEnd, TimeSpan visibleDuration, double width, double height)
     {
-        var totalSeconds = visibleDuration.TotalSeconds;
-        if (totalSeconds <= 0)
+        if (width <= 0 || height <= 0)
         {
             return;
         }
 
-        var targetLines = (int)Math.Clamp(totalSeconds, 10, 60);
-        var step = CalculateGridStep(totalSeconds, targetLines);
-        var pen = GridPen;
-        var firstTickSeconds = Math.Ceiling(windowStart.ToUnixTimeMilliseconds() / (step * 1000)) * step;
-        for (var tickSeconds = firstTickSeconds; tickSeconds <= windowEnd.ToUnixTimeMilliseconds() / 1000.0; tickSeconds += step)
-        {
-            var tickTime = DateTimeOffset.FromUnixTimeMilliseconds((long)(tickSeconds * 1000));
-            var x = TimeToX(tickTime, windowStart, windowEnd, width);
-            if (x < 0 || x > width)
-            {
-                continue;
-            }
+        // Oscilloscope-style: fixed number of major divisions across the width
+        double majorDivisionWidth = width / OscilloscopeMajorDivisions;
+        var perDivisionTime = TimeSpan.FromTicks(visibleDuration.Ticks / OscilloscopeMajorDivisions);
 
-            context.DrawLine(pen, new Point(x, 0), new Point(x, height));
+        // Draw major division lines
+        for (int i = 0; i <= OscilloscopeMajorDivisions; i++)
+        {
+            double x = i * majorDivisionWidth;
+            context.DrawLine(GridPen, new Point(x, 0), new Point(x, height));
+            if (i < OscilloscopeMajorDivisions)
+            {
+                // Minor subdivisions
+                double minorWidth = majorDivisionWidth / OscilloscopeMinorSubdivisions;
+                for (int m = 1; m < OscilloscopeMinorSubdivisions; m++)
+                {
+                    double mx = x + m * minorWidth;
+                    context.DrawLine(MinorGridPen, new Point(mx, 0), new Point(mx, height));
+                }
+            }
         }
     }
 
-    private static double CalculateGridStep(double totalSeconds, int targetLines)
+
+    private void DrawInfoBar(DrawingContext context, Rect bounds, TimeSpan perDivisionTime)
     {
-        var roughStep = totalSeconds / targetLines;
-        if (roughStep <= 0)
-        {
-            return 1;
-        }
+        if (bounds.Width <= 0 || bounds.Height <= 0) return;
+        // Background
+        context.DrawRectangle(LabelAreaBackgroundBrush, null, bounds);
+        context.DrawLine(TrackSeparatorPen, new Point(bounds.Left, bounds.Top), new Point(bounds.Right, bounds.Top));
 
-        var magnitude = Math.Pow(10, Math.Floor(Math.Log10(roughStep)));
-        var residual = roughStep / magnitude;
-
-        return residual switch
+        // Scale label bottom-right inside this bar
+        var scaleLabel = FormatTimeScalePerDivision(perDivisionTime) + "/div";
+        var formatted = new FormattedText(
+            scaleLabel,
+            CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight,
+            new Typeface("Segoe UI", FontStyle.Normal, FontWeight.SemiBold),
+            12,
+            SummaryTextBrush)
         {
-            < 2 => magnitude,
-            < 5 => 2 * magnitude,
-            _ => 5 * magnitude
+            MaxTextWidth = Math.Min(240, bounds.Width - 8),
+            MaxTextHeight = bounds.Height - 4
         };
+        const double margin = 4;
+        var labelRect = new Rect(
+            Math.Max(bounds.X + margin, bounds.Right - formatted.Width - 8 - margin),
+            bounds.Top + (bounds.Height - (formatted.Height + 4)) / 2,
+            formatted.Width + 8,
+            formatted.Height + 4);
+        context.DrawRectangle(ScaleLabelBackgroundBrush, null, labelRect);
+        context.DrawText(formatted, new Point(labelRect.X + 4, labelRect.Y + 2));
     }
 
     private void DrawTrack(DrawingContext context, TimelineTrack track, DateTimeOffset windowStart, DateTimeOffset windowEnd, double width, Rect trackBounds, Rect labelArea)
@@ -359,6 +402,25 @@ public class RealtimeTimelineControl : Control
         {
             context.DrawRectangle(LabelAreaBackgroundBrush, null, labelArea);
             context.DrawLine(TrackSeparatorPen, new Point(labelArea.Left, labelArea.Bottom), new Point(labelArea.Right, labelArea.Bottom));
+
+            // Draw track name centered vertically, left aligned
+            if (!string.IsNullOrWhiteSpace(track.Name))
+            {
+                var formatted = new FormattedText(
+                    track.Name,
+                    CultureInfo.CurrentCulture,
+                    FlowDirection.LeftToRight,
+                    new Typeface("Segoe UI", FontStyle.Normal, FontWeight.SemiBold),
+                    12,
+                    LabelTextBrush)
+                {
+                    MaxTextWidth = labelArea.Width - 8,
+                    MaxTextHeight = labelArea.Height - 4,
+                    TextAlignment = TextAlignment.Left
+                };
+                var textY = labelArea.Y + (labelArea.Height - formatted.Height) / 2;
+                context.DrawText(formatted, new Point(labelArea.X + 4, textY));
+            }
         }
 
         if (track.Events.Count == 0)
@@ -935,6 +997,25 @@ public class RealtimeTimelineControl : Control
         return $"{(duration.TotalMilliseconds * 1000):F3} us";
     }
 
+    private static string FormatTimeScalePerDivision(TimeSpan span)
+    {
+        if (span.TotalSeconds >= 1)
+        {
+            return span.TotalSeconds >= 10 ? $"{span.TotalSeconds:0} s" : $"{span.TotalSeconds:0.###} s";
+        }
+        if (span.TotalMilliseconds >= 1)
+        {
+            return span.TotalMilliseconds >= 10 ? $"{span.TotalMilliseconds:0} ms" : $"{span.TotalMilliseconds:0.###} ms";
+        }
+        double micro = span.TotalMilliseconds * 1000.0; // microseconds
+        if (micro >= 1)
+        {
+            return micro >= 10 ? $"{micro:0} µs" : $"{micro:0.###} µs";
+        }
+        double nano = micro * 1000.0; // nanoseconds
+        return nano >= 10 ? $"{nano:0} ns" : $"{nano:0.###} ns";
+    }
+
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
@@ -1102,5 +1183,24 @@ public class RealtimeTimelineControl : Control
         {
             DetachEvent(child);
         }
+    }
+
+    private static double CalculateGridStep(double totalSeconds, int targetLines)
+    {
+        var roughStep = totalSeconds / targetLines;
+        if (roughStep <= 0)
+        {
+            return 1;
+        }
+
+        var magnitude = Math.Pow(10, Math.Floor(Math.Log10(roughStep)));
+        var residual = roughStep / magnitude;
+
+        return residual switch
+        {
+            < 2 => magnitude,
+            < 5 => 2 * magnitude,
+            _ => 5 * magnitude
+        };
     }
 }
