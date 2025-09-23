@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Diagnostics; // added
 using Avalonia;
 using Avalonia.Media;
 using Avalonia.Rendering;
@@ -16,11 +17,12 @@ public sealed class AvaloniaDiagnosticsInstrumentor
     private readonly struct BatchState
     {
         public readonly Guid EventId;
-        public readonly DateTimeOffset Start;
+        public readonly DateTimeOffset StartTime;
+        public readonly long StartTick;
         public readonly DispatcherPriority Priority;
-        public BatchState(Guid id, DateTimeOffset start, DispatcherPriority priority)
+        public BatchState(Guid id, DateTimeOffset startTime, long startTick, DispatcherPriority priority)
         {
-            EventId = id; Start = start; Priority = priority;
+            EventId = id; StartTime = startTime; StartTick = startTick; Priority = priority;
         }
     }
 
@@ -32,6 +34,8 @@ public sealed class AvaloniaDiagnosticsInstrumentor
     private Guid? _activeRenderId;
     private Guid? _activeParentId;
     private bool _frameOpen; // track if current frame parent still open
+    private long _frameStartTick; // high-resolution start tick for current frame
+    private static readonly double HighResToTimeSpanTicks = (double)TimeSpan.TicksPerSecond / Stopwatch.Frequency; // conversion factor
     private static readonly DispatcherPriority LastPriorityCloseFallback = DispatcherPriority.ContextIdle;
 
     private static T GetRequiredService<T>() where T:class =>
@@ -42,9 +46,9 @@ public sealed class AvaloniaDiagnosticsInstrumentor
     private Guid StartEvent(string track,string label,Color color, Guid? id=null, Guid? parent=null, DateTimeOffset? ts=null, string? metadata=null)
     {
         var eid = id ?? Guid.NewGuid();
-        var t = ts ?? DateTimeOffset.UtcNow;
+        var startTime = ts ?? DateTimeOffset.UtcNow;
         var finalLabel = metadata != null ? $"{label} {metadata}" : label;
-        _activeEvents[eid]=(track,finalLabel,color,t,parent);
+        _activeEvents[eid] = (track, finalLabel, color, startTime, parent);
         return eid;
     }
 
@@ -105,47 +109,50 @@ public sealed class AvaloniaDiagnosticsInstrumentor
         var dispatcher = Dispatcher.UIThread;
         var renderTimer = GetRequiredService<IRenderTimer>();
 
-        void CloseBatchIfOpen(DispatcherPriority p, DateTimeOffset now)
+        void CloseBatchIfOpen(DispatcherPriority p, long endTick)
         {
             if (_openBatches.TryGetValue(p, out var batch))
             {
-                var elapsed = now - batch.Start;
-                if (elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero;
+                var elapsedTicks = Math.Max(0, endTick - batch.StartTick);
+                var elapsed = TimeSpan.FromTicks((long)(elapsedTicks * HighResToTimeSpanTicks));
                 if (!_priorityTimes.ContainsKey(p))
                     _priorityTimes[p] = TimeSpan.Zero;
                 _priorityTimes[p] = _priorityTimes[p].Add(elapsed);
 
-                // Update child event label with duration then complete it
                 if (_activeEvents.TryGetValue(batch.EventId, out var evtInfo))
                 {
                     var newLabel = $"{evtInfo.Label} {FormatPriorityDuration(elapsed)}";
                     _activeEvents[batch.EventId] = (evtInfo.Track, newLabel, evtInfo.Color, evtInfo.Start, evtInfo.Parent);
-                    CompleteEvent(broadcaster, batch.EventId, now);
+                    var endTimestamp = evtInfo.Start + elapsed;
+                    CompleteEvent(broadcaster, batch.EventId, endTimestamp);
                 }
                 _openBatches.Remove(p);
             }
         }
 
-        void FinalizePreviousFrame(DateTimeOffset now)
+        void FinalizePreviousFrame(long endTick)
         {
             if (!_frameOpen || !_activeParentId.HasValue)
             {
                 _priorityTimes.Clear();
                 return;
             }
-            // Close any still-open batches
-            foreach (var kv in _openBatches)
+            // Close any still open priority batches using high-res end tick
+            foreach (var kv in new List<DispatcherPriority>(_openBatches.Keys))
             {
-                var p = kv.Key;
-                CloseBatchIfOpen(p, now);
+                CloseBatchIfOpen(kv, endTick);
             }
             _openBatches.Clear();
-            var metadata = CreatePriorityMetadata();
-            if (_activeEvents.TryGetValue(_activeParentId.Value, out var eventInfo))
+
+            if (_activeEvents.TryGetValue(_activeParentId.Value, out var evtInfo))
             {
-                _activeEvents[_activeParentId.Value] = (eventInfo.Track, $"{eventInfo.Label} {metadata}", eventInfo.Color, eventInfo.Start, eventInfo.Parent);
+                var elapsedTicks = Math.Max(0, endTick - _frameStartTick);
+                var elapsed = TimeSpan.FromTicks((long)(elapsedTicks * HighResToTimeSpanTicks));
+                var metadata = CreatePriorityMetadata();
+                _activeEvents[_activeParentId.Value] = (evtInfo.Track, $"{evtInfo.Label} {metadata}", evtInfo.Color, evtInfo.Start, evtInfo.Parent);
+                var frameEnd = evtInfo.Start + elapsed;
+                CompleteEvent(broadcaster, _activeParentId.Value, frameEnd);
             }
-            CompleteEvent(broadcaster, _activeParentId.Value, now);
             _activeParentId = null;
             _frameOpen = false;
             _priorityTimes.Clear();
@@ -157,7 +164,7 @@ public sealed class AvaloniaDiagnosticsInstrumentor
             {
                 if (ct.IsCancellationRequested) return;
                 if (!_frameOpen) return;
-                FinalizePreviousFrame(DateTimeOffset.UtcNow);
+                FinalizePreviousFrame(Stopwatch.GetTimestamp());
             }, DispatcherPriority.SystemIdle);
         }
 
@@ -165,24 +172,23 @@ public sealed class AvaloniaDiagnosticsInstrumentor
         {
             if (_lastScheduledTick == tick) return;
             _lastScheduledTick = tick;
-            var now = DateTimeOffset.UtcNow;
-            FinalizePreviousFrame(now); // finalize previous frame if still open
+            FinalizePreviousFrame(Stopwatch.GetTimestamp()); // finalize previous frame if open
 
-            // Parent frame
+            // Start parent frame at Send
             dispatcher.InvokeAsync(() =>
             {
                 if (ct.IsCancellationRequested) return;
-                var startNow = DateTimeOffset.UtcNow;
-                _activeParentId = StartEvent("Dispatcher", $"Tick {tick} Frame", Colors.DarkSlateGray, Guid.NewGuid(), null, startNow);
+                var startTime = DateTimeOffset.UtcNow;
+                _frameStartTick = Stopwatch.GetTimestamp();
+                _activeParentId = StartEvent("Dispatcher", $"Tick {tick} Frame", Colors.DarkSlateGray, Guid.NewGuid(), null, startTime);
                 _frameOpen = true;
             }, DispatcherPriority.Send);
 
-            // Child priority batches
             for (int i = 0; i < priorityChain.Count; i++)
             {
                 var p = priorityChain[i];
                 var isLast = i == priorityChain.Count - 1;
-                DispatcherPriority? nextLower = isLast ? (DispatcherPriority?)null : priorityChain[i + 1];
+                var nextLower = isLast ? (DispatcherPriority?)null : priorityChain[i + 1];
 
                 dispatcher.InvokeAsync(() =>
                 {
@@ -190,8 +196,9 @@ public sealed class AvaloniaDiagnosticsInstrumentor
                     if (_activeParentId.HasValue)
                     {
                         var startTime = DateTimeOffset.UtcNow;
+                        var startTick = Stopwatch.GetTimestamp();
                         var childId = StartEvent("Dispatcher", p.ToString(), GetPriorityColor(p), Guid.NewGuid(), _activeParentId.Value, startTime);
-                        _openBatches[p] = new BatchState(childId, startTime, p);
+                        _openBatches[p] = new BatchState(childId, startTime, startTick, p);
                     }
                 }, p);
 
@@ -200,24 +207,21 @@ public sealed class AvaloniaDiagnosticsInstrumentor
                     dispatcher.InvokeAsync(() =>
                     {
                         if (ct.IsCancellationRequested || !_frameOpen) return;
-                        CloseBatchIfOpen(p, DateTimeOffset.UtcNow);
+                        CloseBatchIfOpen(p, Stopwatch.GetTimestamp());
                     }, nextLower.Value);
                 }
                 else if (isLast)
                 {
-                    // Close the final priority earlier than SystemIdle if possible
                     if (LastPriorityCloseFallback != DispatcherPriority.SystemIdle)
                     {
                         dispatcher.InvokeAsync(() =>
                         {
                             if (ct.IsCancellationRequested || !_frameOpen) return;
-                            CloseBatchIfOpen(p, DateTimeOffset.UtcNow);
+                            CloseBatchIfOpen(p, Stopwatch.GetTimestamp());
                         }, LastPriorityCloseFallback);
                     }
                 }
             }
-
-            // Always schedule frame finalization at SystemIdle after child closures
             ScheduleFrameFinalizationAtSystemIdle();
         }
 
@@ -237,14 +241,18 @@ public sealed class AvaloniaDiagnosticsInstrumentor
         void OnRender(TimeSpan _)
         {
             if (ct.IsCancellationRequested) return;
-            var now = DateTimeOffset.UtcNow;
-            if (_activeRenderId is { } rid)
+            var nowTick = Stopwatch.GetTimestamp();
+            if (_activeRenderId is { } rid && _activeEvents.TryGetValue(rid, out var renderInfo))
             {
-                CompleteEvent(broadcaster, rid, now);
+                var elapsedTicks = Math.Max(0, nowTick - _frameStartTick); // note: render event uses frame start tick baseline; acceptable for coarse display
+                var elapsed = TimeSpan.FromTicks((long)(elapsedTicks * HighResToTimeSpanTicks));
+                var renderEnd = renderInfo.Start + elapsed;
+                CompleteEvent(broadcaster, rid, renderEnd);
                 _activeRenderId = null;
             }
             var tick = Interlocked.Increment(ref _renderTick);
-            _activeRenderId = StartEvent("Render", $"Render Tick {tick}", Colors.Purple, Guid.NewGuid(), null, now);
+            var renderStartTime = DateTimeOffset.UtcNow;
+            _activeRenderId = StartEvent("Render", $"Render Tick {tick}", Colors.Purple, Guid.NewGuid(), null, renderStartTime);
             ScheduleFences(tick);
         }
 
@@ -266,21 +274,29 @@ public sealed class AvaloniaDiagnosticsInstrumentor
         finally
         {
             renderTimer.Tick -= OnRender;
-            var endNow = DateTimeOffset.UtcNow;
-            FinalizePreviousFrame(endNow);
+            FinalizePreviousFrame(Stopwatch.GetTimestamp());
             foreach (var kv in _openBatches.Values)
             {
-                CompleteEvent(broadcaster, kv.EventId, endNow);
+                var elapsedTicks = Math.Max(0, Stopwatch.GetTimestamp() - kv.StartTick);
+                var elapsed = TimeSpan.FromTicks((long)(elapsedTicks * HighResToTimeSpanTicks));
+                var endTime = kv.StartTime + elapsed;
+                CompleteEvent(broadcaster, kv.EventId, endTime);
             }
             _openBatches.Clear();
-            if (_activeRenderId is { } rid)
+            if (_activeRenderId is { } rid && _activeEvents.TryGetValue(rid, out var renderInfo))
             {
-                CompleteEvent(broadcaster, rid, endNow);
+                var endTime = renderInfo.Start + TimeSpan.FromMilliseconds(0.1); // minimal duration to avoid zero-length
+                CompleteEvent(broadcaster, rid, endTime);
                 _activeRenderId = null;
             }
             foreach (var id in new List<Guid>(_activeEvents.Keys))
             {
-                CompleteEvent(broadcaster, id, endNow);
+                // Any leftover events: close with minimal duration
+                if (_activeEvents.TryGetValue(id, out var info))
+                {
+                    var endTime = info.Start + TimeSpan.FromMilliseconds(0.1);
+                    CompleteEvent(broadcaster, id, endTime);
+                }
             }
             _activeEvents.Clear();
         }

@@ -505,10 +505,7 @@ public class RealtimeTimelineControl : Control
     {
         // Check initial visibility against the window
         var eventEnd = timelineEvent.End ?? windowEnd;
-        if (eventEnd <= windowStart || timelineEvent.Start >= windowEnd)
-        {
-            return;
-        }
+        if (eventEnd <= windowStart || timelineEvent.Start >= windowEnd) return;
         var startX = TimeToX(timelineEvent.Start, windowStart, windowEnd, width);
         var endX = TimeToX(eventEnd, windowStart, windowEnd, width);
         if (endX <= startX) endX = startX + 1;
@@ -518,21 +515,11 @@ public class RealtimeTimelineControl : Control
         if (availableWidth <= 0) return;
 
         const double margin = 2;
-        // New inset logic for hierarchical rendering
-        double depthInset = depth * 3 + 2; // top/bottom inset grows with depth
-        double minInnerHeight = 4;
-        double innerHeight = Math.Max(minInnerHeight, availableBounds.Height - depthInset * 2);
-        // If depth == 0 keep a little padding from track bounds
-        if (depth == 0)
-        {
-            innerHeight = Math.Min(innerHeight, availableBounds.Height - 4);
-        }
-        var top = availableBounds.Top + depthInset;
-        // Ensure we don't exceed parent bottom
-        if (top + innerHeight > availableBounds.Bottom)
-        {
-            innerHeight = Math.Max(minInnerHeight, availableBounds.Bottom - top);
-        }
+        const double minInnerHeight = 4;
+        // New hierarchical height scaling: each depth reduces height by factor (power curve) and centers inside parent
+        double heightFactor = depth == 0 ? 1.0 : Math.Pow(0.6, depth); // 60% of parent for depth 1, 36% for depth 2, etc.
+        double targetHeight = Math.Max(minInnerHeight, availableBounds.Height * heightFactor - margin * 2);
+        double top = availableBounds.Top + (availableBounds.Height - targetHeight) / 2.0; // center vertically inside container
 
         var innerWidth = availableWidth - margin * 2;
         if (innerWidth < MinEventDrawWidth)
@@ -549,7 +536,7 @@ public class RealtimeTimelineControl : Control
             endX = startX + innerWidth + margin * 2;
         }
 
-        var rect = new Rect(startX + margin, top + margin, innerWidth, Math.Max(minInnerHeight, innerHeight - margin * 2));
+        var rect = new Rect(startX + margin, top + margin, innerWidth, targetHeight);
         var roundedRect = new RoundedRect(rect, timelineEvent.CornerRadius);
         context.DrawRectangle(timelineEvent.Fill, null, roundedRect);
 

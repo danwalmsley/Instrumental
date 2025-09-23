@@ -147,7 +147,7 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
         var track = EnsureTrack(trackName);
         var timelineEvent = new TimelineEvent(eventId, startTimestamp, label, color, parentId);
         timelineEvent.Complete(endTimestamp);
-        
+
         _eventsById[eventId] = timelineEvent;
         _eventParentById[eventId] = parentId;
         _eventTrackById[eventId] = trackName;
