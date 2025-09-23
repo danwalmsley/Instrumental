@@ -13,7 +13,8 @@ public sealed record TimelineEventMessage
         string? track,
         string? label,
         string? colorHex,
-        Guid? parentEventId)
+        Guid? parentEventId,
+        DateTimeOffset? endTimestamp = null)
     {
         MessageType = messageType;
         EventId = eventId;
@@ -22,6 +23,7 @@ public sealed record TimelineEventMessage
         Label = label;
         ColorHex = colorHex;
         ParentEventId = parentEventId;
+        EndTimestamp = endTimestamp;
     }
 
     public TimelineEventMessageType MessageType { get; }
@@ -41,6 +43,9 @@ public sealed record TimelineEventMessage
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public Guid? ParentEventId { get; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTimeOffset? EndTimestamp { get; }
 
     public static TimelineEventMessage CreateStart(TimelineEventStart start)
     {
@@ -74,5 +79,23 @@ public sealed record TimelineEventMessage
             null,
             null,
             null);
+    }
+
+    public static TimelineEventMessage CreateComplete(TimelineEventComplete complete)
+    {
+        if (complete is null)
+        {
+            throw new ArgumentNullException(nameof(complete));
+        }
+
+        return new TimelineEventMessage(
+            TimelineEventMessageType.Complete,
+            complete.EventId,
+            complete.StartTimestamp,
+            complete.Track,
+            complete.Label,
+            complete.ColorHex,
+            complete.ParentEventId,
+            complete.EndTimestamp);
     }
 }

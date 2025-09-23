@@ -24,6 +24,9 @@ public class RealtimeTimelineControl : Control
     private const double SummarySpacing = 8;
     private const double SummaryTickLabelHeight = 16;
     private const double SummaryWindowMinWidth = 6;
+    private const double OutsideLabelPadding = 4;
+    private const double OutsideLabelGap = 2;
+    private const double MinEventDrawWidth = 10; // Minimum on-screen width for an event
 
     private readonly Dictionary<TimelineTrack, NotifyCollectionChangedEventHandler?> _trackHandlers = new();
     private readonly Dictionary<TimelineEvent, NotifyCollectionChangedEventHandler> _eventChildHandlers = new();
@@ -365,17 +368,31 @@ public class RealtimeTimelineControl : Control
 
         // Apply level-of-detail filtering based on zoom level and event count
         var eventsToRender = GetEventsForLevelOfDetail(track.Events, windowStart, windowEnd, width);
-        
-        foreach (var timelineEvent in eventsToRender)
+        var ordered = eventsToRender.OrderBy(e => e.Start).ToList();
+        for (int i = 0; i < ordered.Count; i++)
         {
-            DrawEvent(context, timelineEvent, windowStart, windowEnd, width, trackBounds, labelArea, depth: 0);
+            var evt = ordered[i];
+            double? prevRight = null;
+            if (i > 0)
+            {
+                var prev = ordered[i - 1];
+                var prevEnd = prev.End ?? windowEnd;
+                prevRight = TimeToX(prevEnd, windowStart, windowEnd, width);
+            }
+            double? nextLeft = null;
+            if (i < ordered.Count - 1)
+            {
+                var next = ordered[i + 1];
+                nextLeft = TimeToX(next.Start, windowStart, windowEnd, width);
+            }
+            DrawEvent(context, evt, windowStart, windowEnd, width, trackBounds, labelArea, depth: 0, prevEventRight: prevRight, nextEventLeft: nextLeft);
         }
     }
 
     // Level-of-detail constants
     private const int MaxEventsToRender = 100;
     private const int FullDetailThreshold = 50;
-    
+
     /// <summary>
     /// Gets a filtered list of events to render based on the current zoom level and viewport.
     /// When there are many events, this applies level-of-detail filtering to maintain performance.
@@ -386,11 +403,11 @@ public class RealtimeTimelineControl : Control
         // Calculate the current zoom level based on visible duration
         var visibleDuration = windowEnd - windowStart;
         var totalSeconds = visibleDuration.TotalSeconds;
-        
+
         // Calculate what the grid step would be at this zoom level
         var targetLines = (int)Math.Clamp(totalSeconds, 10, 60);
         var gridStepSeconds = CalculateGridStep(totalSeconds, targetLines);
-        
+
         // If grid lines represent 50ms or less, we're at high detail - show all visible events
         const double detailThresholdSeconds = 0.05; // 50ms
         if (gridStepSeconds <= detailThresholdSeconds)
@@ -408,7 +425,7 @@ public class RealtimeTimelineControl : Control
 
         // Filter to only events that are visible in the current viewport
         var visibleEvents = allEvents.Where(evt => IsEventVisible(evt, windowStart, windowEnd)).ToList();
-        
+
         if (visibleEvents.Count <= MaxEventsToRender)
         {
             // If visible events are within our limit, render them all
@@ -418,7 +435,7 @@ public class RealtimeTimelineControl : Control
         // Apply level-of-detail sampling
         return ApplyLevelOfDetailSampling(visibleEvents, windowStart, windowEnd, viewportWidth);
     }
-    
+
     /// <summary>
     /// Checks if an event is visible within the current viewport time range
     /// </summary>
@@ -427,9 +444,10 @@ public class RealtimeTimelineControl : Control
         var eventEnd = evt.End ?? windowEnd;
         return evt.Start < windowEnd && eventEnd > windowStart;
     }
-    
+
     /// <summary>
-    /// Applies intelligent sampling to reduce the number of events to render while maintaining visual representation
+    /// Applies intelligent sampling to reduce the number of events to render while maintaining visual representation.
+    /// Since we now use complete events (with both start and end timestamps), all events are complete when broadcast.
     /// </summary>
     private IEnumerable<TimelineEvent> ApplyLevelOfDetailSampling(List<TimelineEvent> visibleEvents, DateTimeOffset windowStart, DateTimeOffset windowEnd, double viewportWidth)
     {
@@ -437,145 +455,227 @@ public class RealtimeTimelineControl : Control
         const double minPixelsPerEvent = 2.0; // Minimum pixels needed to see an event
         var maxEventsForPixelDensity = (int)(viewportWidth / minPixelsPerEvent);
         var targetEventCount = Math.Min(MaxEventsToRender, Math.Max(10, maxEventsForPixelDensity));
-        
+
         if (visibleEvents.Count <= targetEventCount)
         {
             return visibleEvents;
         }
 
-        // Sort events by start time
+        // With complete events, we can sample all events equally since they all have end times
+        // Sort events by start time for consistent sampling
         var sortedEvents = visibleEvents.OrderBy(evt => evt.Start).ToList();
-        
-        // Use systematic sampling to get a representative subset
-        var samplingRatio = (double)sortedEvents.Count / targetEventCount;
-        var sampledEvents = new List<TimelineEvent>(targetEventCount);
-        
-        for (int i = 0; i < targetEventCount && i < sortedEvents.Count; i++)
+
+        // Reserve slots for recent events to maintain real-time context
+        var recentEventCount = Math.Min(targetEventCount / 4, Math.Min(10, sortedEvents.Count / 10));
+        var recentEvents = sortedEvents.TakeLast(recentEventCount).ToList();
+
+        // Calculate remaining slots for systematic sampling
+        var remainingSlotsForSampling = targetEventCount - recentEventCount;
+        var eventsToSample = sortedEvents.Take(sortedEvents.Count - recentEventCount).ToList();
+
+        var sampledEvents = new List<TimelineEvent>();
+
+        if (remainingSlotsForSampling > 0 && eventsToSample.Count > 0)
         {
-            var index = (int)(i * samplingRatio);
-            if (index < sortedEvents.Count)
+            if (eventsToSample.Count <= remainingSlotsForSampling)
             {
-                sampledEvents.Add(sortedEvents[index]);
+                sampledEvents.AddRange(eventsToSample);
+            }
+            else
+            {
+                // Use systematic sampling to get a representative subset
+                var samplingRatio = (double)eventsToSample.Count / remainingSlotsForSampling;
+
+                for (int i = 0; i < remainingSlotsForSampling && i < eventsToSample.Count; i++)
+                {
+                    var index = (int)(i * samplingRatio);
+                    if (index < eventsToSample.Count)
+                    {
+                        sampledEvents.Add(eventsToSample[index]);
+                    }
+                }
             }
         }
-        
-        // Always include the most recent events to maintain real-time feel
-        var recentEventCount = Math.Min(10, sortedEvents.Count / 10);
-        var recentEvents = sortedEvents.TakeLast(recentEventCount);
-        
-        // Combine sampled events with recent events, removing duplicates
-        var result = sampledEvents.Concat(recentEvents).Distinct().OrderBy(evt => evt.Start);
-        
-        return result;
+
+        // Combine sampled events with recent events, removing any duplicates, and sort by start time
+        return sampledEvents.Concat(recentEvents).Distinct().OrderBy(evt => evt.Start);
     }
 
-    private void DrawEvent(DrawingContext context, TimelineEvent timelineEvent, DateTimeOffset windowStart, DateTimeOffset windowEnd, double width, Rect availableBounds, Rect labelArea, int depth)
+    private void DrawEvent(DrawingContext context, TimelineEvent timelineEvent, DateTimeOffset windowStart, DateTimeOffset windowEnd, double width, Rect availableBounds, Rect labelArea, int depth, double? prevEventRight = null, double? nextEventLeft = null)
     {
+        // Check initial visibility against the window
         var eventEnd = timelineEvent.End ?? windowEnd;
         if (eventEnd <= windowStart || timelineEvent.Start >= windowEnd)
         {
             return;
         }
-
         var startX = TimeToX(timelineEvent.Start, windowStart, windowEnd, width);
         var endX = TimeToX(eventEnd, windowStart, windowEnd, width);
-        if (endX <= startX)
-        {
-            endX = startX + 1;
-        }
-
+        if (endX <= startX) endX = startX + 1;
         startX = Math.Clamp(startX, availableBounds.Left, availableBounds.Right);
         endX = Math.Clamp(endX, availableBounds.Left, availableBounds.Right);
-
         var availableWidth = endX - startX;
-        if (availableWidth <= 0)
-        {
-            return;
-        }
+        if (availableWidth <= 0) return;
 
         const double margin = 2;
-        var scale = depth == 0 ? 1 : Math.Pow(0.75, depth);
-        var eventHeight = availableBounds.Height * (depth == 0 ? 0.9 : 0.6 * scale);
-        var verticalOffset = availableBounds.Top + (availableBounds.Height - eventHeight) / 2;
-        var rect = new Rect(startX + margin, verticalOffset + margin, availableWidth - margin * 2, eventHeight - margin * 2);
+        // New inset logic for hierarchical rendering
+        double depthInset = depth * 3 + 2; // top/bottom inset grows with depth
+        double minInnerHeight = 4;
+        double innerHeight = Math.Max(minInnerHeight, availableBounds.Height - depthInset * 2);
+        // If depth == 0 keep a little padding from track bounds
+        if (depth == 0)
+        {
+            innerHeight = Math.Min(innerHeight, availableBounds.Height - 4);
+        }
+        var top = availableBounds.Top + depthInset;
+        // Ensure we don't exceed parent bottom
+        if (top + innerHeight > availableBounds.Bottom)
+        {
+            innerHeight = Math.Max(minInnerHeight, availableBounds.Bottom - top);
+        }
 
+        var innerWidth = availableWidth - margin * 2;
+        if (innerWidth < MinEventDrawWidth)
+        {
+            var expansion = MinEventDrawWidth - innerWidth;
+            var newRight = startX + margin + innerWidth + expansion + margin;
+            var maxRight = availableBounds.Right;
+            if (newRight > maxRight)
+            {
+                var overflow = newRight - maxRight;
+                startX = Math.Max(availableBounds.Left, startX - overflow);
+            }
+            innerWidth = MinEventDrawWidth;
+            endX = startX + innerWidth + margin * 2;
+        }
+
+        var rect = new Rect(startX + margin, top + margin, innerWidth, Math.Max(minInnerHeight, innerHeight - margin * 2));
         var roundedRect = new RoundedRect(rect, timelineEvent.CornerRadius);
         context.DrawRectangle(timelineEvent.Fill, null, roundedRect);
 
         var eventDuration = (timelineEvent.End ?? windowEnd) - timelineEvent.Start;
-        if (eventDuration < TimeSpan.Zero)
-        {
-            eventDuration = TimeSpan.Zero;
-        }
+        if (eventDuration < TimeSpan.Zero) eventDuration = TimeSpan.Zero;
+        var durationTextRaw = FormatDuration(eventDuration);
 
-        var durationText = FormatDuration(eventDuration);
-        var durationFormatted = new FormattedText(
-            durationText,
+        // Pre-create formatted objects (full width & constrained variants)
+        FormattedText CreateText(string text, double fontSize, double? maxWidth = null, bool ellipsis = false) => new(
+            text,
             CultureInfo.CurrentCulture,
             FlowDirection.LeftToRight,
             new Typeface("Segoe UI"),
-            10,
+            fontSize,
             Brushes.White)
         {
-            Trimming = TextTrimming.None,
-            TextAlignment = TextAlignment.Left,
-            MaxTextWidth = Math.Max(0, rect.Width - 8)
+            MaxTextWidth = maxWidth.HasValue ? Math.Max(0, maxWidth.Value) : double.PositiveInfinity,
+            MaxTextHeight = double.PositiveInfinity,
+            Trimming = ellipsis ? TextTrimming.CharacterEllipsis : TextTrimming.None,
+            TextAlignment = TextAlignment.Left
         };
 
-        var labelDrawn = false;
+        var fullLabel = !string.IsNullOrWhiteSpace(timelineEvent.Label) ? CreateText(timelineEvent.Label, 12) : null;
+        var constrainedLabel = fullLabel != null ? CreateText(timelineEvent.Label, 12, rect.Width - 8, ellipsis: true) : null;
+        var durationFormatted = CreateText(durationTextRaw, 10, rect.Width - 8);
 
+        var labelDrawn = false;
+        var durationDrawn = false;
+
+        // Decide label strategy
         if (!string.IsNullOrWhiteSpace(timelineEvent.Label))
         {
-            if (rect.Width > 20)
+            // Condition for attempting outside label: the full label does not fit inside the rect with padding
+            var insideCanFit = fullLabel!.Width + 8 <= rect.Width && fullLabel.Height + durationFormatted.Height + 12 <= rect.Height && rect.Width >= 20;
+            if (insideCanFit)
             {
-                var formattedText = new FormattedText(
-                    timelineEvent.Label,
-                    CultureInfo.CurrentCulture,
-                    FlowDirection.LeftToRight,
-                    new Typeface("Segoe UI"),
-                    12,
-                    Brushes.White)
-                {
-                    MaxTextWidth = Math.Max(0, rect.Width - 8),
-                    MaxTextHeight = Math.Max(0, rect.Height - 8),
-                    TextAlignment = TextAlignment.Left,
-                    Trimming = TextTrimming.CharacterEllipsis
-                };
-
+                // Standard inside rendering
                 var textOrigin = new Point(rect.X + 4, rect.Y + 4);
-                context.DrawText(formattedText, textOrigin);
-
-                var durationOriginY = textOrigin.Y + formattedText.Height + 2;
+                context.DrawText(fullLabel, textOrigin);
+                var durationOriginY = textOrigin.Y + fullLabel.Height + 2;
                 if (durationOriginY + durationFormatted.Height > rect.Bottom - 4)
-                {
                     durationOriginY = rect.Bottom - durationFormatted.Height - 4;
-                }
-
-                var durationOrigin = new Point(rect.X + 4, durationOriginY);
-                context.DrawText(durationFormatted, durationOrigin);
+                context.DrawText(durationFormatted, new Point(rect.X + 4, durationOriginY));
                 labelDrawn = true;
+                durationDrawn = true;
             }
-            else if (labelArea.Height > 0)
+            else
             {
-                DrawVerticalLabel(context, timelineEvent.Label, rect.X + rect.Width / 2, labelArea);
-                DrawDurationInLabelArea(context, durationFormatted, rect, labelArea);
-                labelDrawn = true;
+                // Attempt right outside label if gap is sufficient and won't collide with next event
+                bool placedOutside = false;
+                if (fullLabel != null)
+                {
+                    var gapRightLimit = nextEventLeft ?? availableBounds.Right;
+                    var neededRight = rect.Right + OutsideLabelPadding + fullLabel.Width;
+                    if (neededRight <= gapRightLimit - 1 && neededRight <= availableBounds.Right)
+                    {
+                        var rightOrigin = new Point(rect.Right + OutsideLabelPadding, rect.Y + 4);
+                        context.DrawText(fullLabel, rightOrigin);
+                        var durOutside = CreateText(durationTextRaw, 10);
+                        var durOrigin = new Point(rightOrigin.X, rightOrigin.Y + fullLabel.Height + OutsideLabelGap);
+                        if (durOrigin.Y + durOutside.Height <= availableBounds.Bottom - 2)
+                        {
+                            context.DrawText(durOutside, durOrigin);
+                            durationDrawn = true;
+                        }
+                        labelDrawn = true;
+                        placedOutside = true;
+                    }
+                    if (!placedOutside)
+                    {
+                        // Attempt left outside
+                        var gapLeftLimit = prevEventRight ?? availableBounds.Left;
+                        var neededLeft = rect.Left - OutsideLabelPadding - fullLabel.Width;
+                        if (neededLeft >= gapLeftLimit + 1 && neededLeft >= availableBounds.Left)
+                        {
+                            var leftOrigin = new Point(neededLeft, rect.Y + 4);
+                            context.DrawText(fullLabel, leftOrigin);
+                            var durOutside = CreateText(durationTextRaw, 10);
+                            var durOrigin = new Point(leftOrigin.X, leftOrigin.Y + fullLabel.Height + OutsideLabelGap);
+                            if (durOrigin.Y + durOutside.Height <= availableBounds.Bottom - 2)
+                            {
+                                context.DrawText(durOutside, durOrigin);
+                                durationDrawn = true;
+                            }
+                            labelDrawn = true;
+                            placedOutside = true;
+                        }
+                    }
+                }
+                if (!labelDrawn)
+                {
+                    if (rect.Width > 20 && constrainedLabel != null)
+                    {
+                        var textOrigin = new Point(rect.X + 4, rect.Y + 4);
+                        context.DrawText(constrainedLabel, textOrigin);
+                        var durationOriginY = textOrigin.Y + constrainedLabel.Height + 2;
+                        if (durationOriginY + durationFormatted.Height > rect.Bottom - 4)
+                            durationOriginY = rect.Bottom - durationFormatted.Height - 4;
+                        context.DrawText(durationFormatted, new Point(rect.X + 4, durationOriginY));
+                        labelDrawn = true;
+                        durationDrawn = true;
+                    }
+                    else if (labelArea.Height > 0)
+                    {
+                        DrawVerticalLabel(context, timelineEvent.Label, rect.X + rect.Width / 2, labelArea);
+                        DrawDurationInLabelArea(context, durationFormatted, rect, labelArea);
+                        labelDrawn = true;
+                        durationDrawn = true;
+                    }
+                }
             }
         }
-
         if (!labelDrawn)
         {
             if (rect.Width > 20)
             {
                 var durationOrigin = new Point(rect.X + 4, rect.Bottom - durationFormatted.Height - 4);
                 context.DrawText(durationFormatted, durationOrigin);
+                durationDrawn = true;
             }
-            else if (labelArea.Height > 0)
+            else if (labelArea.Height > 0 && !durationDrawn)
             {
                 DrawDurationInLabelArea(context, durationFormatted, rect, labelArea);
+                durationDrawn = true;
             }
         }
-
         foreach (var child in timelineEvent.Children)
         {
             DrawEvent(context, child, windowStart, windowEnd, width, rect, labelArea, depth + 1);

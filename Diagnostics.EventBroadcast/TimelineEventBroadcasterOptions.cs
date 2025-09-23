@@ -7,7 +7,7 @@ public sealed class TimelineEventBroadcasterOptions
 {
     public const int DefaultPort = 41234;
 
-    public IPAddress BroadcastAddress { get; init; } = IPAddress.Broadcast;
+    public IPAddress BroadcastAddress { get; init; } = IPAddress.Loopback;
 
     public int Port { get; init; } = DefaultPort;
 

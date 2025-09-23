@@ -58,6 +58,12 @@ public sealed class TimelineEventBroadcaster : IAsyncDisposable, IDisposable
         EnqueueMessage(TimelineEventMessage.CreateStop(stop));
     }
 
+    public void EnqueueComplete(TimelineEventComplete complete)
+    {
+        ArgumentNullException.ThrowIfNull(complete);
+        EnqueueMessage(TimelineEventMessage.CreateComplete(complete));
+    }
+
     private void EnqueueMessage(TimelineEventMessage message)
     {
         ThrowIfDisposed();
@@ -102,7 +108,7 @@ public sealed class TimelineEventBroadcaster : IAsyncDisposable, IDisposable
         }
 
         var batch = new List<TimelineEventMessage>();
-        while (_queue.TryDequeue(out var message))
+        while (_queue.TryDequeue(out var message) && batch.Count < 100)
         {
             batch.Add(message);
         }

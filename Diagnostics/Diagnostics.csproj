@@ -32,5 +32,6 @@
 
     <ItemGroup>
         <ProjectReference Include="..\Diagnostics.EventBroadcast\Diagnostics.EventBroadcast.csproj" />
+        <ProjectReference Include="..\Diagnostics.Avalonia\Diagnostics.Avalonia.csproj" />
     </ItemGroup>
 </Project>

@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Media;
 using Avalonia.Threading;
 using Diagnostics.EventBroadcast;
 using Diagnostics.EventBroadcast.Messaging;
@@ -136,17 +137,30 @@ public sealed class TimelineEventListener : IAsyncDisposable, IDisposable
             case TimelineEventMessageType.Stop:
                 _timeline.ApplyEventStop(message.EventId, message.Timestamp);
                 break;
+            case TimelineEventMessageType.Complete:
+                if (message.Track is null || message.Label is null || message.ColorHex is null || message.EndTimestamp is null)
+                {
+                    return;
+                }
+
+                if (!TryParseColor(message.ColorHex, out var completeColor))
+                {
+                    return;
+                }
+
+                _timeline.ApplyCompleteEvent(message.EventId, message.Track, message.Timestamp, message.EndTimestamp.Value, message.Label, completeColor, message.ParentEventId);
+                break;
         }
     }
 
-    private static bool TryParseColor(string value, out Avalonia.Media.Color color)
+    private static bool TryParseColor(string value, out Color color)
     {
         if (!value.StartsWith('#'))
         {
             value = "#" + value;
         }
 
-        return Avalonia.Media.Color.TryParse(value, out color);
+        return Color.TryParse(value, out color);
     }
 
     public async Task StopAsync()

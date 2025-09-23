@@ -16,7 +16,7 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
     private readonly Dictionary<Guid, string> _eventTrackById = new();
     private readonly Dictionary<string, TimelineTrack> _tracksByName = new(StringComparer.OrdinalIgnoreCase);
     private const double HistoryRetentionMultiplier = 4;
-    public static readonly TimeSpan MinimumVisibleDuration = TimeSpan.FromMilliseconds(5);
+    public static readonly TimeSpan MinimumVisibleDuration = TimeSpan.FromTicks(10);
     public static readonly TimeSpan MaximumVisibleDuration = TimeSpan.FromSeconds(30);
 
     private readonly DispatcherTimer _timer;
@@ -134,6 +134,31 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
         if (_eventsById.TryGetValue(eventId, out var timelineEvent))
         {
             timelineEvent.Complete(timestamp);
+        }
+    }
+
+    public void ApplyCompleteEvent(Guid eventId, string trackName, DateTimeOffset startTimestamp, DateTimeOffset endTimestamp, string label, Color color, Guid? parentId = null)
+    {
+        if (_eventsById.TryGetValue(eventId, out var existing))
+        {
+            RemoveEventFromContainers(existing);
+        }
+
+        var track = EnsureTrack(trackName);
+        var timelineEvent = new TimelineEvent(eventId, startTimestamp, label, color, parentId);
+        timelineEvent.Complete(endTimestamp);
+        
+        _eventsById[eventId] = timelineEvent;
+        _eventParentById[eventId] = parentId;
+        _eventTrackById[eventId] = trackName;
+
+        if (parentId is { } parentGuid && _eventsById.TryGetValue(parentGuid, out var parentEvent))
+        {
+            InsertEventOrdered(parentEvent.Children, timelineEvent);
+        }
+        else
+        {
+            InsertEventOrdered(track.Events, timelineEvent);
         }
     }
 

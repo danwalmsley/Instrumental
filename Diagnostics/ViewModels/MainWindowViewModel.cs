@@ -17,6 +17,7 @@ using Diagnostics.Services;
 using ReactiveUI;
 using System.Reactive;
 using System.Reactive.Linq;
+using Diagnostics.Avalonia;
 
 namespace Diagnostics.ViewModels;
 
@@ -28,6 +29,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
     private CancellationTokenSource? _demoCts;
     private Task? _demoTask;
     private readonly List<IDisposable> _commandsToDispose = new();
+    private readonly AvaloniaDiagnosticsInstrumentor _instrumentor = new();
 
     public MainWindowViewModel()
     {
@@ -98,7 +100,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
         }
 
         _disposed = true;
-        CancelDemo();
+        
         if (_demoTask is { } runningDemo)
         {
             try
@@ -183,11 +185,14 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
 
     private async Task RunDemoAsync(CancellationToken cancellationToken)
     {
-        CancelDemo();
+        if (_broadcaster is null)
+        {
+            return; // Nothing to do in design mode or if broadcaster unavailable.
+        }
 
         var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _demoCts = linkedCts;
-        var demoTask = RunDemoInternalAsync(linkedCts.Token);
+        var demoTask = _instrumentor.InstrumentAvalonia(_broadcaster, TimeSpan.FromSeconds(30), linkedCts.Token);
         _demoTask = demoTask;
 
         try
@@ -208,116 +213,6 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
                 _demoCts = null;
             }
         }
-    }
-
-    private long _renderTickCounter;
-
-    private async Task RunDemoInternalAsync(CancellationToken cancellationToken)
-    {
-        var renderTimer = GetRequiredService<IRenderTimer>();
-        if (renderTimer is null)
-        {
-            throw new InvalidOperationException("IRenderTimer service is not available.");
-        }
-
-        _renderTickCounter = 0;
-        var dispatcher = Dispatcher.UIThread;
-        var priorities = DispatcherPriorityHelper.OrderedPriorities;
-        Guid? activePriorityEventId = null;
-        Guid? activeRenderEventId = null;
-        const string renderTrack = "Render";
-        const string dispatcherTrack = "Dispatcher";
-
-        void OnRender(TimeSpan _)
-        {
-            if (cancellationToken.IsCancellationRequested)
-            {
-                return;
-            }
-
-            var now = DateTimeOffset.UtcNow;
-            if (activePriorityEventId is { } lingeringPriorityId)
-            {
-                BroadcastStop(lingeringPriorityId, now, applyLocally: false);
-                activePriorityEventId = null;
-            }
-
-            if (activeRenderEventId is { } previousRenderId)
-            {
-                BroadcastStop(previousRenderId, now, applyLocally: false);
-                activeRenderEventId = null;
-            }
-
-            var tick = Interlocked.Increment(ref _renderTickCounter);
-            
-            activeRenderEventId = BroadcastStart(renderTrack, $"Render Tick {tick}", Colors.Purple, Guid.NewGuid(), null, now, applyLocally: false);
-
-            foreach (var priority in priorities)
-            {
-                var localPriority = priority;
-                dispatcher.InvokeAsync(() =>
-                {
-                    if (cancellationToken.IsCancellationRequested)
-                    {
-                        return;
-                    }
-
-                    var priorityNow = DateTimeOffset.UtcNow;
-
-                    if (activePriorityEventId is { } previousPriorityId)
-                    {
-                        BroadcastStop(previousPriorityId, priorityNow, applyLocally: false);
-                        activePriorityEventId = null;
-                    }
-
-                    var label = $"Tick {tick} - {localPriority}";
-                    var color = DispatcherPriorityHelper.ToColor(localPriority);
-                    activePriorityEventId = BroadcastStart(dispatcherTrack, label, color, Guid.NewGuid(), null, priorityNow, applyLocally: false);
-                }, priority);
-            }
-
-            dispatcher.InvokeAsync(() =>
-            {
-                if (activePriorityEventId is { } finalPriorityId)
-                {
-                    BroadcastStop(finalPriorityId, DateTimeOffset.UtcNow, applyLocally: false);
-                    activePriorityEventId = null;
-                }
-            }, DispatcherPriority.Send);
-        }
-
-        renderTimer.Tick += OnRender;
-
-        try
-        {
-            await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            // expected when cancelled
-        }
-        finally
-        {
-            renderTimer.Tick -= OnRender;
-
-            if (activePriorityEventId is { } finalPriorityId)
-            {
-                BroadcastStop(finalPriorityId, DateTimeOffset.UtcNow, applyLocally: false);
-                activePriorityEventId = null;
-            }
-
-            if (activeRenderEventId is { } renderId)
-            {
-                BroadcastStop(renderId, DateTimeOffset.UtcNow, applyLocally: false);
-                activeRenderEventId = null;
-            }
-        }
-    }
-
-
-    private void CancelDemo()
-    {
-        _demoCts?.Cancel();
     }
 
     private static string ToHex(Color color) =>

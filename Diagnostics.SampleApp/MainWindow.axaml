@@ -1,0 +1,13 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Diagnostics.SampleApp.MainWindow"
+        Width="640" Height="360"
+        Title="Diagnostics Sample App">
+  <Grid>
+    <StackPanel Margin="16" Spacing="12">
+      <TextBlock FontSize="24" Text="Diagnostics Sample App" />
+      <TextBlock TextWrapping="Wrap" Text="This is a minimal Avalonia application used to exercise the diagnostics instrumentation. Interact with the window or resize it to generate dispatcher and render activity." />
+    </StackPanel>
+  </Grid>
+</Window>
+
