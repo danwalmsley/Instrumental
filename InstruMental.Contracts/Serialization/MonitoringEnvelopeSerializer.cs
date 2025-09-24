@@ -13,24 +13,24 @@ public static class MonitoringEnvelopeSerializer
             _ => throw new ArgumentOutOfRangeException(nameof(encoding), encoding, null)
         };
 
-    public static bool TryDeserialize(ReadOnlySpan<byte> payload, EnvelopeEncoding encoding, out MonitoringEnvelope? envelope)
+    public static bool TryDeserialize(Memory<byte> payload, EnvelopeEncoding encoding, out MonitoringEnvelope? envelope)
     {
         return encoding switch
         {
-            EnvelopeEncoding.Json => JsonEnvelopeSerializer.TryDeserialize(payload, out envelope),
-            EnvelopeEncoding.Binary => BinaryEnvelopeSerializer.TryDeserialize(payload.ToArray(), out envelope),
+            EnvelopeEncoding.Json => JsonEnvelopeSerializer.TryDeserialize(payload.Span, out envelope),
+            EnvelopeEncoding.Binary => BinaryEnvelopeSerializer.TryDeserialize(payload, out envelope),
             _ => throw new ArgumentOutOfRangeException(nameof(encoding), encoding, null)
         };
     }
 
-    public static bool TryDeserialize(ReadOnlySpan<byte> payload, out MonitoringEnvelope? envelope)
+    public static bool TryDeserialize(Memory<byte> payload, out MonitoringEnvelope? envelope)
     {
-        if (JsonEnvelopeSerializer.TryDeserialize(payload, out envelope))
+        if (JsonEnvelopeSerializer.TryDeserialize(payload.Span, out envelope))
         {
             return true;
         }
 
-        return BinaryEnvelopeSerializer.TryDeserialize(payload.ToArray(), out envelope);
+        return BinaryEnvelopeSerializer.TryDeserialize(payload, out envelope);
     }
 
     // Prefer ReadOnlyMemory<byte> overload so callers that already have Memory avoid a copy
