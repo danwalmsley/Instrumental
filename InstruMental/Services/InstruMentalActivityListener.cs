@@ -159,10 +159,3 @@ public sealed class InstruMentalActivityListener : IAsyncDisposable, IDisposable
         GC.SuppressFinalize(this);
     }
 }
-
-public sealed class InstruMentalActivityListenerOptions
-{
-    public IPAddress ListenAddress { get; init; } = IPAddress.Any;
-    public int Port { get; init; } = 5005;
-    public EnvelopeEncoding? PreferredEncoding { get; init; } = null; // Auto-detect by default
-}
