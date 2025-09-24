@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Globalization;
 using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -10,7 +11,7 @@ using InstrumentScope.Models;
 
 namespace InstrumentScope.ViewModels;
 
-public partial class TimelineViewModel : ObservableObject, IDisposable
+public class TimelineViewModel : ObservableObject, IDisposable
 {
     private readonly Dictionary<Guid, TimelineEvent> _eventsById = new();
     private readonly Dictionary<Guid, Guid?> _eventParentById = new();
@@ -104,8 +105,48 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
     private string? _triggerTrackName;
     private string? _triggerEventLabel;
     private TriggerEdge _triggerEdge = TriggerEdge.Rising;
-    private double _triggerOffsetWithinWindow = 0.2; // 20% from left by default
     private DateTimeOffset? _lastTriggerTime;
+    private DateTimeOffset? _activeTriggerTime;
+
+    private TimeSpan _triggerHoldoff = TimeSpan.Zero; // 0 disables holdoff
+    private string _triggerHoldoffText = "0 ms";
+    public string TriggerHoldoffText
+    {
+        get => _triggerHoldoffText;
+        set
+        {
+            var text = value.Trim();
+            if (TryParseDuration(text, out var span))
+            {
+                TriggerHoldoff = span;
+                var normalized = FormatDurationShort(TriggerHoldoff);
+                SetProperty(ref _triggerHoldoffText, normalized);
+            }
+            else
+            {
+                var formatted = FormatDurationShort(TriggerHoldoff);
+                SetProperty(ref _triggerHoldoffText, formatted);
+            }
+        }
+    }
+    public TimeSpan TriggerHoldoff
+    {
+        get => _triggerHoldoff;
+        set
+        {
+            if (SetProperty(ref _triggerHoldoff, value))
+            {
+                var formatted = FormatDurationShort(value);
+                if (!string.Equals(_triggerHoldoffText, formatted, StringComparison.Ordinal))
+                {
+                    _triggerHoldoffText = formatted;
+                    OnPropertyChanged(nameof(TriggerHoldoffText));
+                }
+            }
+        }
+    }
+    private TimeSpan _triggerMeasurePosition = TimeSpan.Zero; // 0 = center
+    private string _triggerMeasurePositionText = "0 µs";
 
     public bool TriggerEnabled
     {
@@ -114,10 +155,15 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
         {
             if (SetProperty(ref _triggerEnabled, value))
             {
-                // In trigger mode, do not scroll automatically
+                OnPropertyChanged(nameof(IsTriggerArmed));
                 if (value)
                 {
+                    // In trigger mode, do not scroll automatically and anchor to last if available
                     PauseLive();
+                    if (ActiveTriggerTime is { } t)
+                    {
+                        AnchorToTrigger(t);
+                    }
                 }
             }
         }
@@ -131,6 +177,7 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
             if (SetProperty(ref _triggerTrackName, value))
             {
                 OnPropertyChanged(nameof(AvailableEventLabels));
+                OnPropertyChanged(nameof(IsTriggerArmed));
             }
         }
     }
@@ -138,7 +185,13 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
     public string? TriggerEventLabel
     {
         get => _triggerEventLabel;
-        set => SetProperty(ref _triggerEventLabel, value);
+        set
+        {
+            if (SetProperty(ref _triggerEventLabel, value))
+            {
+                OnPropertyChanged(nameof(IsTriggerArmed));
+            }
+        }
     }
 
     public TriggerEdge TriggerMode
@@ -147,18 +200,7 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
         set => SetProperty(ref _triggerEdge, value);
     }
 
-    /// <summary>
-    /// The horizontal position of the trigger line within the viewport (0..1). Default 0.2 (20%).
-    /// </summary>
-    public double TriggerOffsetWithinWindow
-    {
-        get => _triggerOffsetWithinWindow;
-        set
-        {
-            var clamped = double.IsNaN(value) ? 0.2 : Math.Clamp(value, 0.0, 1.0);
-            SetProperty(ref _triggerOffsetWithinWindow, clamped);
-        }
-    }
+    public bool IsTriggerArmed => TriggerEnabled && !string.IsNullOrWhiteSpace(TriggerTrackName) && !string.IsNullOrWhiteSpace(TriggerEventLabel);
 
     public DateTimeOffset? LastTriggerTime
     {
@@ -166,10 +208,64 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
         private set => SetProperty(ref _lastTriggerTime, value);
     }
 
-    public bool IsTriggerArmed => TriggerEnabled && !string.IsNullOrWhiteSpace(TriggerTrackName) && !string.IsNullOrWhiteSpace(TriggerEventLabel);
+    public DateTimeOffset? ActiveTriggerTime
+    {
+        get => _activeTriggerTime;
+        private set => SetProperty(ref _activeTriggerTime, value);
+    }
+
+    // Measure position: time-based horizontal offset from center
+    public TimeSpan TriggerMeasurePosition
+    {
+        get => _triggerMeasurePosition;
+        set
+        {
+            if (SetProperty(ref _triggerMeasurePosition, value))
+            {
+                var formatted = FormatDurationShort(value);
+                if (!string.Equals(_triggerMeasurePositionText, formatted, StringComparison.Ordinal))
+                {
+                    _triggerMeasurePositionText = formatted;
+                    OnPropertyChanged(nameof(TriggerMeasurePositionText));
+                }
+                if (TriggerEnabled && LastTriggerTime is { } t)
+                {
+                    AnchorToTrigger(t);
+                }
+            }
+        }
+    }
+
+    public string TriggerMeasurePositionText
+    {
+        get => _triggerMeasurePositionText;
+        set
+        {
+            var text = value.Trim();
+            if (TryParseSignedDuration(text, out var span))
+            {
+                TriggerMeasurePosition = span;
+                var normalized = FormatDurationShort(TriggerMeasurePosition);
+                SetProperty(ref _triggerMeasurePositionText, normalized);
+            }
+            else
+            {
+                var formatted = FormatDurationShort(TriggerMeasurePosition);
+                SetProperty(ref _triggerMeasurePositionText, formatted);
+            }
+        }
+    }
 
     private static readonly Regex TrailingDurationRegex = new(
         pattern: @"\s+(?<num>\d+(?:[\.,]\d+)?)\s*(?<unit>ns|us|µs|μs|ms|s|sec|secs|seconds|m|min|minutes|h|hr|hours)$",
+        options: RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex DurationParseRegex = new(
+        pattern: @"^\s*(?<num>\d+(?:[\.,]\d+)?)\s*(?<unit>ns|us|µs|μs|ms|s)?\s*$",
+        options: RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex SignedDurationParseRegex = new(
+        pattern: @"^\s*(?<sign>[+-])?\s*(?<num>\d+(?:[\.,]\d+)?)\s*(?<unit>ns|us|µs|μs|ms|s)?\s*$",
         options: RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static string NormalizeLabel(string label)
@@ -326,7 +422,17 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
             return;
         }
 
+        // Holdoff: ignore triggers that occur before the holdoff window elapses
+        if (LastTriggerTime is { } last && TriggerHoldoff > TimeSpan.Zero)
+        {
+            if (timestamp <= last + TriggerHoldoff)
+            {
+                return; // still in holdoff window
+            }
+        }
+
         AnchorToTrigger(timestamp);
+        ActiveTriggerTime = timestamp;
         LastTriggerTime = timestamp;
     }
 
@@ -335,9 +441,21 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
         // Freeze live scrolling while triggered
         IsLive = false;
 
-        var offset = TimeSpan.FromMilliseconds(VisibleDuration.TotalMilliseconds * TriggerOffsetWithinWindow);
-        var proposedStart = timestamp - offset;
-        var proposedEnd = proposedStart + VisibleDuration;
+        var vis = VisibleDuration;
+        if (vis <= TimeSpan.Zero)
+        {
+            vis = TimeSpan.FromMilliseconds(1);
+        }
+
+        // Place timestamp at center + measure offset
+        var measure = TriggerMeasurePosition;
+        // clamp measure to half window to keep it within the viewport after clamping
+        var half = TimeSpan.FromTicks(vis.Ticks / 2);
+        if (measure > half) measure = half;
+        if (measure < -half) measure = -half;
+
+        var proposedStart = timestamp - measure - half;
+        var proposedEnd = proposedStart + vis;
 
         var bounds = GetTimelineBoundsCore();
         var clamped = ClampWindowToBounds(proposedStart, proposedEnd, bounds);
@@ -435,6 +553,8 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
         IsCapturing = false;
         CaptureStartTime = null;
         CaptureEndTime = null;
+        ActiveTriggerTime = null;
+        LastTriggerTime = null;
         GoLive();
     }
 
@@ -474,7 +594,7 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
 
         if (restoreLive)
         {
-            if (TriggerEnabled && LastTriggerTime is { } t)
+            if (TriggerEnabled && ActiveTriggerTime is { } t)
             {
                 AnchorToTrigger(t);
                 return;
@@ -483,7 +603,7 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
             return;
         }
 
-        if (TriggerEnabled && LastTriggerTime is { } last)
+        if (TriggerEnabled && ActiveTriggerTime is { } last)
         {
             AnchorToTrigger(last);
             return;
@@ -500,7 +620,7 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
     public void ResetZoom()
     {
         VisibleDuration = _defaultVisibleDuration;
-        if (TriggerEnabled && LastTriggerTime is { } t)
+        if (TriggerEnabled && ActiveTriggerTime is { } t)
         {
             AnchorToTrigger(t);
         }
@@ -570,9 +690,16 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
 
         VisibleDuration = newDuration;
 
-        if (restoreLive)
+        if (restoreLive && !TriggerEnabled)
         {
             GoLive();
+            return;
+        }
+
+        // Keep trigger anchored if armed and we have an active trigger time; do not update to a newer one during zoom
+        if (TriggerEnabled && ActiveTriggerTime is { } t)
+        {
+            AnchorToTrigger(t);
             return;
         }
 
@@ -756,5 +883,88 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
         {
             ViewportEnd = now;
         }
+    }
+
+    private static bool TryParseDuration(string text, out TimeSpan result)
+    {
+        result = TimeSpan.Zero;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return true; // empty -> 0
+        }
+        var m = DurationParseRegex.Match(text);
+        if (!m.Success)
+        {
+            return false;
+        }
+        var numStr = m.Groups["num"].Value.Replace(',', '.');
+        if (!double.TryParse(numStr, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+        {
+            return false;
+        }
+        var unit = m.Groups["unit"].Success ? m.Groups["unit"].Value.ToLowerInvariant() : "ms"; // default ms
+        double ticks;
+        switch (unit)
+        {
+            case "ns": ticks = value * TimeSpan.TicksPerMillisecond / 1_000_000.0; break;
+            case "us":
+            case "µs":
+            case "μs": ticks = value * TimeSpan.TicksPerMillisecond / 1_000.0; break;
+            case "ms": ticks = value * TimeSpan.TicksPerMillisecond; break;
+            case "s": ticks = value * TimeSpan.TicksPerSecond; break;
+            default: ticks = value * TimeSpan.TicksPerMillisecond; break;
+        }
+        var tsTicks = (long)Math.Round(Math.Clamp(ticks, 0, TimeSpan.TicksPerSecond));
+        result = TimeSpan.FromTicks(tsTicks);
+        return true;
+    }
+
+    private static bool TryParseSignedDuration(string text, out TimeSpan result)
+    {
+        result = TimeSpan.Zero;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return true; // empty -> 0
+        }
+        var m = SignedDurationParseRegex.Match(text);
+        if (!m.Success)
+        {
+            return false;
+        }
+        var numStr = m.Groups["num"].Value.Replace(',', '.');
+        if (!double.TryParse(numStr, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+        {
+            return false;
+        }
+        if (m.Groups["sign"].Success && m.Groups["sign"].Value == "-")
+        {
+            value = -value;
+        }
+        var unit = m.Groups["unit"].Success ? m.Groups["unit"].Value.ToLowerInvariant() : "ms";
+        double ticks;
+        switch (unit)
+        {
+            case "ns": ticks = value * TimeSpan.TicksPerMillisecond / 1_000_000.0; break;
+            case "us":
+            case "µs":
+            case "μs": ticks = value * TimeSpan.TicksPerMillisecond / 1_000.0; break;
+            case "ms": ticks = value * TimeSpan.TicksPerMillisecond; break;
+            case "s": ticks = value * TimeSpan.TicksPerSecond; break;
+            default: ticks = value * TimeSpan.TicksPerMillisecond; break;
+        }
+        var tsTicks = (long)Math.Round(Math.Clamp(ticks, -TimeSpan.TicksPerDay, TimeSpan.TicksPerDay));
+        result = TimeSpan.FromTicks(tsTicks);
+        return true;
+    }
+
+    private static string FormatDurationShort(TimeSpan span)
+    {
+        if (span == TimeSpan.Zero) return "0 ms";
+        if (span.TotalSeconds >= 1) return $"{span.TotalSeconds:0.###} s";
+        if (span.TotalMilliseconds >= 1) return $"{span.TotalMilliseconds:0.###} ms";
+        var micro = span.TotalMilliseconds * 1000.0;
+        if (micro >= 1) return $"{micro:0.###} µs";
+        var nano = micro * 1000.0;
+        return $"{nano:0.###} ns";
     }
 }

@@ -147,10 +147,10 @@ public class RealtimeTimelineControl : Control
     {
         if (string.IsNullOrEmpty(e.PropertyName) ||
             e.PropertyName is nameof(TimelineViewModel.TriggerEnabled) or
-            nameof(TimelineViewModel.TriggerOffsetWithinWindow) or
             nameof(TimelineViewModel.LastTriggerTime) or
             nameof(TimelineViewModel.VisibleDuration) or
-            nameof(TimelineViewModel.ViewportEnd))
+            nameof(TimelineViewModel.ViewportEnd) or
+            nameof(TimelineViewModel.TriggerMeasurePosition))
         {
             InvalidateVisual();
         }
@@ -385,8 +385,22 @@ public class RealtimeTimelineControl : Control
         {
             return;
         }
-        var offset = double.IsNaN(vm.TriggerOffsetWithinWindow) ? 0.2 : Math.Clamp(vm.TriggerOffsetWithinWindow, 0, 1);
-        var x = Math.Clamp(width * offset, 0, width);
+
+        // Compute x from measure position (time) relative to center
+        var vis = VisibleDuration;
+        if (vis <= TimeSpan.Zero)
+        {
+            vis = TimeSpan.FromMilliseconds(1);
+        }
+        var half = TimeSpan.FromTicks(vis.Ticks / 2);
+        var measure = vm.TriggerMeasurePosition;
+        if (measure > half) measure = half;
+        if (measure < -half) measure = -half;
+        var centerX = width / 2.0;
+        var ratio = half.Ticks > 0 ? (double)measure.Ticks / half.Ticks : 0.0; // -1..1
+        var x = centerX + ratio * centerX;
+        x = Math.Clamp(x, 0, width);
+
         context.DrawLine(TriggerPen, new Point(x, 0), new Point(x, height));
 
         // Optional small top indicator triangle

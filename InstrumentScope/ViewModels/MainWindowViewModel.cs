@@ -8,14 +8,10 @@ using System.Windows.Input;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
-using Avalonia.Platform;
-using Avalonia.Rendering;
-using Avalonia.Threading;
 using InstrumentScope.EventBroadcast;
 using InstrumentScope.EventBroadcast.Messaging;
 using InstrumentScope.Services;
 using ReactiveUI;
-using System.Reactive;
 using System.Reactive.Linq;
 using InstrumentScope.Avalonia;
 
@@ -42,6 +38,9 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
         GoLiveCommand = CreateCommand(Timeline.GoLive, () => !Timeline.IsLive, nameof(TimelineViewModel.IsLive));
         ClearCommand = CreateCommand(Timeline.ClearTimeline);
 
+        // Reflect inner Timeline property changes outward for pass-through properties
+        Timeline.PropertyChanged += OnTimelinePropertyChanged;
+
         if (Design.IsDesignMode)
         {
             SeedDesignTimeData();
@@ -60,6 +59,30 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
             };
             _broadcaster = new TimelineEventBroadcaster(broadcasterOptions);
         }
+    }
+
+    private void OnTimelinePropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (string.IsNullOrEmpty(e.PropertyName) || e.PropertyName == nameof(TimelineViewModel.TriggerHoldoffText))
+        {
+            OnPropertyChanged(nameof(TriggerHoldoffText));
+        }
+        if (string.IsNullOrEmpty(e.PropertyName) || e.PropertyName == nameof(TimelineViewModel.TriggerMeasurePositionText))
+        {
+            OnPropertyChanged(nameof(TriggerMeasurePositionText));
+        }
+    }
+
+    public string TriggerHoldoffText
+    {
+        get => Timeline.TriggerHoldoffText;
+        set => Timeline.TriggerHoldoffText = value;
+    }
+
+    public string TriggerMeasurePositionText
+    {
+        get => Timeline.TriggerMeasurePositionText;
+        set => Timeline.TriggerMeasurePositionText = value;
     }
 
     public TimelineViewModel Timeline { get; } = new();

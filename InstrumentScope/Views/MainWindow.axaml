@@ -62,10 +62,16 @@
             <ComboBox Width="110"
                       ItemsSource="{Binding Timeline.TriggerModes}"
                       SelectedItem="{Binding Timeline.TriggerMode}"/>
-            <TextBlock Text="Offset:" VerticalAlignment="Center"/>
-            <Slider Width="160" Minimum="0" Maximum="1" SmallChange="0.01" LargeChange="0.1"
-                    Value="{Binding Timeline.TriggerOffsetWithinWindow}"/>
-            <TextBlock Text="{Binding Timeline.TriggerOffsetWithinWindow}" VerticalAlignment="Center"/>
+            <TextBlock Text="Measure:" VerticalAlignment="Center"/>
+            <TextBox Width="110"
+                     Watermark="e.g. -100 µs"
+                     ToolTip.Tip="Horizontal offset from center. Units: ns, µs/us, ms, s (sign allowed)"
+                     Text="{Binding TriggerMeasurePositionText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+            <TextBlock Text="Holdoff:" VerticalAlignment="Center"/>
+            <TextBox Width="110"
+                     Watermark="e.g. 100 µs"
+                     ToolTip.Tip="0 to 1 s. Units: ns, µs/us, ms, s"
+                     Text="{Binding TriggerHoldoffText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
             <TextBlock Text="Last:" VerticalAlignment="Center"/>
             <TextBlock Text="{Binding Timeline.LastTriggerTime}" VerticalAlignment="Center"/>
         </StackPanel>
