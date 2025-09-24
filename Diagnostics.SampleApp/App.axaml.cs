@@ -14,9 +14,11 @@ namespace Diagnostics.SampleApp;
 public sealed partial class App : Application
 {
     private TimelineEventBroadcaster? _broadcaster;
-    private AvaloniaDiagnosticsInstrumentor? _instrumentor;
+    //private AvaloniaDiagnosticsInstrumentor? _instrumentor;
+    private AvaloniaMetricsInstrumentor? _metricsInstrumentor; // added metrics instrumentor
     private CancellationTokenSource? _cts;
     private Task? _instrumentationTask;
+    private Task? _metricsTask; // task for metrics listener
 
     private static readonly DispatcherPriority[] WorkPriorities = new[]
     {
@@ -44,9 +46,11 @@ public sealed partial class App : Application
     private void StartDiagnostics()
     {
         _broadcaster = new TimelineEventBroadcaster();
-        _instrumentor = new AvaloniaDiagnosticsInstrumentor();
+        //_instrumentor = new AvaloniaDiagnosticsInstrumentor();
+        _metricsInstrumentor = new AvaloniaMetricsInstrumentor(_broadcaster, new[] { "Avalonia", "System.Runtime" });
         _cts = new CancellationTokenSource();
-        _instrumentationTask = _instrumentor.InstrumentAvalonia(_broadcaster, null, _cts.Token);
+        //_instrumentationTask = _instrumentor.InstrumentAvalonia(_broadcaster, null, _cts.Token);
+        _metricsTask = _metricsInstrumentor.RunAsync(_cts.Token);
         StartSyntheticDispatcherWork(_cts.Token);
     }
 
@@ -96,10 +100,15 @@ public sealed partial class App : Application
             {
                 try { await _instrumentationTask.ConfigureAwait(false); } catch { /* swallow */ }
             }
+            if (_metricsTask is not null)
+            {
+                try { await _metricsTask.ConfigureAwait(false); } catch { /* swallow */ }
+            }
         }
         finally
         {
             _cts?.Dispose();
+            _metricsInstrumentor?.Dispose();
             _broadcaster?.Dispose();
         }
     }

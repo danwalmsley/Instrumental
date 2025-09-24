@@ -9,6 +9,7 @@ internal static class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        AppContext.SetSwitch("Avalonia.Diagnostics.Diagnostic.IsEnabled", true);
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
     }
 

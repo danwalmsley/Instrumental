@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Diagnostics; // added
 using Avalonia;
 using Avalonia.Media;
 using Avalonia.Rendering;
@@ -35,7 +34,6 @@ public sealed class AvaloniaDiagnosticsInstrumentor
     private Guid? _activeParentId;
     private bool _frameOpen; // track if current frame parent still open
     private long _frameStartTick; // high-resolution start tick for current frame
-    private static readonly double HighResToTimeSpanTicks = (double)TimeSpan.TicksPerSecond / Stopwatch.Frequency; // conversion factor
     private static readonly DispatcherPriority LastPriorityCloseFallback = DispatcherPriority.ContextIdle;
 
     private static T GetRequiredService<T>() where T:class =>
@@ -46,7 +44,7 @@ public sealed class AvaloniaDiagnosticsInstrumentor
     private Guid StartEvent(string track,string label,Color color, Guid? id=null, Guid? parent=null, DateTimeOffset? ts=null, string? metadata=null)
     {
         var eid = id ?? Guid.NewGuid();
-        var startTime = ts ?? DateTimeOffset.UtcNow;
+        var startTime = ts ?? HighResolutionClock.UtcNow;
         var finalLabel = metadata != null ? $"{label} {metadata}" : label;
         _activeEvents[eid] = (track, finalLabel, color, startTime, parent);
         return eid;
@@ -114,7 +112,7 @@ public sealed class AvaloniaDiagnosticsInstrumentor
             if (_openBatches.TryGetValue(p, out var batch))
             {
                 var elapsedTicks = Math.Max(0, endTick - batch.StartTick);
-                var elapsed = TimeSpan.FromTicks((long)(elapsedTicks * HighResToTimeSpanTicks));
+                var elapsed = HighResolutionClock.TimestampDeltaToTimeSpan(elapsedTicks);
                 if (!_priorityTimes.ContainsKey(p))
                     _priorityTimes[p] = TimeSpan.Zero;
                 _priorityTimes[p] = _priorityTimes[p].Add(elapsed);
@@ -147,7 +145,7 @@ public sealed class AvaloniaDiagnosticsInstrumentor
             if (_activeEvents.TryGetValue(_activeParentId.Value, out var evtInfo))
             {
                 var elapsedTicks = Math.Max(0, endTick - _frameStartTick);
-                var elapsed = TimeSpan.FromTicks((long)(elapsedTicks * HighResToTimeSpanTicks));
+                var elapsed = HighResolutionClock.TimestampDeltaToTimeSpan(elapsedTicks);
                 var metadata = CreatePriorityMetadata();
                 _activeEvents[_activeParentId.Value] = (evtInfo.Track, $"{evtInfo.Label} {metadata}", evtInfo.Color, evtInfo.Start, evtInfo.Parent);
                 var frameEnd = evtInfo.Start + elapsed;
@@ -164,7 +162,7 @@ public sealed class AvaloniaDiagnosticsInstrumentor
             {
                 if (ct.IsCancellationRequested) return;
                 if (!_frameOpen) return;
-                FinalizePreviousFrame(Stopwatch.GetTimestamp());
+                FinalizePreviousFrame(HighResolutionClock.GetTimestamp());
             }, DispatcherPriority.SystemIdle);
         }
 
@@ -172,14 +170,14 @@ public sealed class AvaloniaDiagnosticsInstrumentor
         {
             if (_lastScheduledTick == tick) return;
             _lastScheduledTick = tick;
-            FinalizePreviousFrame(Stopwatch.GetTimestamp()); // finalize previous frame if open
+            FinalizePreviousFrame(HighResolutionClock.GetTimestamp()); // finalize previous frame if open
 
             // Start parent frame at Send
             dispatcher.InvokeAsync(() =>
             {
                 if (ct.IsCancellationRequested) return;
-                var startTime = DateTimeOffset.UtcNow;
-                _frameStartTick = Stopwatch.GetTimestamp();
+                var startTime = HighResolutionClock.UtcNow;
+                _frameStartTick = HighResolutionClock.GetTimestamp();
                 _activeParentId = StartEvent("Dispatcher", $"Tick {tick} Frame", Colors.DarkSlateGray, Guid.NewGuid(), null, startTime);
                 _frameOpen = true;
             }, DispatcherPriority.Send);
@@ -195,8 +193,8 @@ public sealed class AvaloniaDiagnosticsInstrumentor
                     if (ct.IsCancellationRequested || !_frameOpen) return;
                     if (_activeParentId.HasValue)
                     {
-                        var startTime = DateTimeOffset.UtcNow;
-                        var startTick = Stopwatch.GetTimestamp();
+                        var startTime = HighResolutionClock.UtcNow;
+                        var startTick = HighResolutionClock.GetTimestamp();
                         var childId = StartEvent("Dispatcher", p.ToString(), GetPriorityColor(p), Guid.NewGuid(), _activeParentId.Value, startTime);
                         _openBatches[p] = new BatchState(childId, startTime, startTick, p);
                     }
@@ -207,7 +205,7 @@ public sealed class AvaloniaDiagnosticsInstrumentor
                     dispatcher.InvokeAsync(() =>
                     {
                         if (ct.IsCancellationRequested || !_frameOpen) return;
-                        CloseBatchIfOpen(p, Stopwatch.GetTimestamp());
+                        CloseBatchIfOpen(p, HighResolutionClock.GetTimestamp());
                     }, nextLower.Value);
                 }
                 else if (isLast)
@@ -217,7 +215,7 @@ public sealed class AvaloniaDiagnosticsInstrumentor
                         dispatcher.InvokeAsync(() =>
                         {
                             if (ct.IsCancellationRequested || !_frameOpen) return;
-                            CloseBatchIfOpen(p, Stopwatch.GetTimestamp());
+                            CloseBatchIfOpen(p, HighResolutionClock.GetTimestamp());
                         }, LastPriorityCloseFallback);
                     }
                 }
@@ -241,17 +239,17 @@ public sealed class AvaloniaDiagnosticsInstrumentor
         void OnRender(TimeSpan _)
         {
             if (ct.IsCancellationRequested) return;
-            var nowTick = Stopwatch.GetTimestamp();
+            var nowTick = HighResolutionClock.GetTimestamp();
             if (_activeRenderId is { } rid && _activeEvents.TryGetValue(rid, out var renderInfo))
             {
                 var elapsedTicks = Math.Max(0, nowTick - _frameStartTick); // note: render event uses frame start tick baseline; acceptable for coarse display
-                var elapsed = TimeSpan.FromTicks((long)(elapsedTicks * HighResToTimeSpanTicks));
+                var elapsed = HighResolutionClock.TimestampDeltaToTimeSpan(elapsedTicks);
                 var renderEnd = renderInfo.Start + elapsed;
                 CompleteEvent(broadcaster, rid, renderEnd);
                 _activeRenderId = null;
             }
             var tick = Interlocked.Increment(ref _renderTick);
-            var renderStartTime = DateTimeOffset.UtcNow;
+            var renderStartTime = HighResolutionClock.UtcNow;
             _activeRenderId = StartEvent("Render", $"Render Tick {tick}", Colors.Purple, Guid.NewGuid(), null, renderStartTime);
             ScheduleFences(tick);
         }
@@ -274,11 +272,11 @@ public sealed class AvaloniaDiagnosticsInstrumentor
         finally
         {
             renderTimer.Tick -= OnRender;
-            FinalizePreviousFrame(Stopwatch.GetTimestamp());
+            FinalizePreviousFrame(HighResolutionClock.GetTimestamp());
             foreach (var kv in _openBatches.Values)
             {
-                var elapsedTicks = Math.Max(0, Stopwatch.GetTimestamp() - kv.StartTick);
-                var elapsed = TimeSpan.FromTicks((long)(elapsedTicks * HighResToTimeSpanTicks));
+                var elapsedTicks = Math.Max(0, HighResolutionClock.GetTimestamp() - kv.StartTick);
+                var elapsed = HighResolutionClock.TimestampDeltaToTimeSpan(elapsedTicks);
                 var endTime = kv.StartTime + elapsed;
                 CompleteEvent(broadcaster, kv.EventId, endTime);
             }
