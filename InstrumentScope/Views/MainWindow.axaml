@@ -16,7 +16,7 @@
         <vm:MainWindowViewModel/>
     </Design.DataContext>
 
-    <Grid RowDefinitions="Auto,*">
+   <Grid RowDefinitions="Auto,Auto,*" RowSpacing="6">
         <StackPanel Orientation="Horizontal" Margin="12" Spacing="8">
             <Button Content="Start Capture"
                     Command="{Binding StartCaptureCommand}"
@@ -47,7 +47,30 @@
                     MinWidth="100"/>
         </StackPanel>
 
-        <controls:RealtimeTimelineControl Grid.Row="1"
+        <!-- Trigger controls -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="12,0,12,0" Spacing="8" VerticalAlignment="Center">
+            <CheckBox Content="Trigger" IsChecked="{Binding Timeline.TriggerEnabled}"/>
+            <TextBlock Text="Track:" VerticalAlignment="Center"/>
+            <ComboBox Width="140"
+                      ItemsSource="{Binding Timeline.AvailableTrackNames}"
+                      SelectedItem="{Binding Timeline.TriggerTrackName}"/>
+            <TextBlock Text="Event:" VerticalAlignment="Center"/>
+            <ComboBox Width="160"
+                      ItemsSource="{Binding Timeline.AvailableEventLabels}"
+                      SelectedItem="{Binding Timeline.TriggerEventLabel}"/>
+            <TextBlock Text="Edge:" VerticalAlignment="Center"/>
+            <ComboBox Width="110"
+                      ItemsSource="{Binding Timeline.TriggerModes}"
+                      SelectedItem="{Binding Timeline.TriggerMode}"/>
+            <TextBlock Text="Offset:" VerticalAlignment="Center"/>
+            <Slider Width="160" Minimum="0" Maximum="1" SmallChange="0.01" LargeChange="0.1"
+                    Value="{Binding Timeline.TriggerOffsetWithinWindow}"/>
+            <TextBlock Text="{Binding Timeline.TriggerOffsetWithinWindow}" VerticalAlignment="Center"/>
+            <TextBlock Text="Last:" VerticalAlignment="Center"/>
+            <TextBlock Text="{Binding Timeline.LastTriggerTime}" VerticalAlignment="Center"/>
+        </StackPanel>
+
+        <controls:RealtimeTimelineControl Grid.Row="2"
                                           Tracks="{Binding Timeline.Tracks}"
                                           CurrentTime="{Binding Timeline.ViewportEnd}"
                                           VisibleDuration="{Binding Timeline.VisibleDuration}"

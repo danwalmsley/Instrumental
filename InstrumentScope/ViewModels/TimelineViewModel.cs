@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Text.RegularExpressions;
 using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -92,6 +93,129 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
         private set => SetProperty(ref _captureEndTime, value);
     }
 
+    public enum TriggerEdge
+    {
+        Rising,
+        Falling,
+        Both
+    }
+
+    private bool _triggerEnabled;
+    private string? _triggerTrackName;
+    private string? _triggerEventLabel;
+    private TriggerEdge _triggerEdge = TriggerEdge.Rising;
+    private double _triggerOffsetWithinWindow = 0.2; // 20% from left by default
+    private DateTimeOffset? _lastTriggerTime;
+
+    public bool TriggerEnabled
+    {
+        get => _triggerEnabled;
+        set
+        {
+            if (SetProperty(ref _triggerEnabled, value))
+            {
+                // In trigger mode, do not scroll automatically
+                if (value)
+                {
+                    PauseLive();
+                }
+            }
+        }
+    }
+
+    public string? TriggerTrackName
+    {
+        get => _triggerTrackName;
+        set
+        {
+            if (SetProperty(ref _triggerTrackName, value))
+            {
+                OnPropertyChanged(nameof(AvailableEventLabels));
+            }
+        }
+    }
+
+    public string? TriggerEventLabel
+    {
+        get => _triggerEventLabel;
+        set => SetProperty(ref _triggerEventLabel, value);
+    }
+
+    public TriggerEdge TriggerMode
+    {
+        get => _triggerEdge;
+        set => SetProperty(ref _triggerEdge, value);
+    }
+
+    /// <summary>
+    /// The horizontal position of the trigger line within the viewport (0..1). Default 0.2 (20%).
+    /// </summary>
+    public double TriggerOffsetWithinWindow
+    {
+        get => _triggerOffsetWithinWindow;
+        set
+        {
+            var clamped = double.IsNaN(value) ? 0.2 : Math.Clamp(value, 0.0, 1.0);
+            SetProperty(ref _triggerOffsetWithinWindow, clamped);
+        }
+    }
+
+    public DateTimeOffset? LastTriggerTime
+    {
+        get => _lastTriggerTime;
+        private set => SetProperty(ref _lastTriggerTime, value);
+    }
+
+    public bool IsTriggerArmed => TriggerEnabled && !string.IsNullOrWhiteSpace(TriggerTrackName) && !string.IsNullOrWhiteSpace(TriggerEventLabel);
+
+    private static readonly Regex TrailingDurationRegex = new(
+        pattern: @"\s+(?<num>\d+(?:[\.,]\d+)?)\s*(?<unit>ns|us|µs|μs|ms|s|sec|secs|seconds|m|min|minutes|h|hr|hours)$",
+        options: RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static string NormalizeLabel(string label)
+    {
+        if (string.IsNullOrWhiteSpace(label)) return label;
+        var trimmed = label.Trim();
+        var match = TrailingDurationRegex.Match(trimmed);
+        if (match.Success)
+        {
+            // Remove the matched trailing " numeric+unit" part
+            var without = trimmed[..match.Index];
+            return without.TrimEnd();
+        }
+        return trimmed;
+    }
+
+    public IEnumerable<string> AvailableTrackNames => Tracks.Select(t => t.Name);
+
+    public IEnumerable<string> AvailableEventLabels
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(TriggerTrackName)) return Enumerable.Empty<string>();
+            if (!_tracksByName.TryGetValue(TriggerTrackName, out var track)) return Enumerable.Empty<string>();
+            return EnumerateEventTree(track.Events)
+                .Select(e => NormalizeLabel(e.Label))
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(s => s, StringComparer.Ordinal);
+        }
+    }
+
+    public Array TriggerModes => Enum.GetValues(typeof(TriggerEdge));
+
+    private static IEnumerable<TimelineEvent> EnumerateEventTree(IEnumerable<TimelineEvent> events)
+    {
+        foreach (var evt in events)
+        {
+            yield return evt;
+            foreach (var child in EnumerateEventTree(evt.Children))
+            {
+                yield return child;
+            }
+        }
+    }
+
     public TimelineTrack EnsureTrack(string name)
     {
         if (_tracksByName.TryGetValue(name, out var track))
@@ -102,6 +226,7 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
         track = new TimelineTrack(name);
         _tracksByName[name] = track;
         Tracks.Add(track);
+        OnPropertyChanged(nameof(AvailableTrackNames));
         return track;
     }
 
@@ -127,6 +252,10 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
             InsertEventOrdered(track.Events, timelineEvent);
         }
 
+        OnPropertyChanged(nameof(AvailableEventLabels));
+
+        // Trigger on rising edge (event start)
+        OnTriggerCandidate(trackName, label, timestamp, rising: true);
     }
 
     public void ApplyEventStop(Guid eventId, DateTimeOffset timestamp)
@@ -134,6 +263,12 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
         if (_eventsById.TryGetValue(eventId, out var timelineEvent))
         {
             timelineEvent.Complete(timestamp);
+            OnPropertyChanged(nameof(AvailableEventLabels));
+            // Determine track and label from stored maps
+            if (_eventTrackById.TryGetValue(eventId, out var trackName))
+            {
+                OnTriggerCandidate(trackName, timelineEvent.Label, timestamp, rising: false);
+            }
         }
     }
 
@@ -160,6 +295,53 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
         {
             InsertEventOrdered(track.Events, timelineEvent);
         }
+
+        OnPropertyChanged(nameof(AvailableEventLabels));
+
+        // Consider both edges for a complete event
+        OnTriggerCandidate(trackName, label, startTimestamp, rising: true);
+        OnTriggerCandidate(trackName, label, endTimestamp, rising: false);
+    }
+
+    private void OnTriggerCandidate(string trackName, string label, DateTimeOffset timestamp, bool rising)
+    {
+        if (!IsTriggerArmed)
+        {
+            return;
+        }
+
+        // Edge filter
+        if (TriggerMode == TriggerEdge.Rising && !rising) return;
+        if (TriggerMode == TriggerEdge.Falling && rising) return;
+
+        // Track and label match
+        if (!string.Equals(trackName, TriggerTrackName, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var normalized = NormalizeLabel(label);
+        if (!string.Equals(normalized, TriggerEventLabel, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        AnchorToTrigger(timestamp);
+        LastTriggerTime = timestamp;
+    }
+
+    private void AnchorToTrigger(DateTimeOffset timestamp)
+    {
+        // Freeze live scrolling while triggered
+        IsLive = false;
+
+        var offset = TimeSpan.FromMilliseconds(VisibleDuration.TotalMilliseconds * TriggerOffsetWithinWindow);
+        var proposedStart = timestamp - offset;
+        var proposedEnd = proposedStart + VisibleDuration;
+
+        var bounds = GetTimelineBoundsCore();
+        var clamped = ClampWindowToBounds(proposedStart, proposedEnd, bounds);
+        ViewportEnd = clamped.End;
     }
 
     private void RemoveEventFromContainers(TimelineEvent timelineEvent)
@@ -292,7 +474,18 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
 
         if (restoreLive)
         {
+            if (TriggerEnabled && LastTriggerTime is { } t)
+            {
+                AnchorToTrigger(t);
+                return;
+            }
             GoLive();
+            return;
+        }
+
+        if (TriggerEnabled && LastTriggerTime is { } last)
+        {
+            AnchorToTrigger(last);
             return;
         }
 
@@ -307,7 +500,14 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
     public void ResetZoom()
     {
         VisibleDuration = _defaultVisibleDuration;
-        GoLive();
+        if (TriggerEnabled && LastTriggerTime is { } t)
+        {
+            AnchorToTrigger(t);
+        }
+        else
+        {
+            GoLive();
+        }
     }
 
     public void PanViewport(double ratio)
@@ -346,6 +546,7 @@ public partial class TimelineViewModel : ObservableObject, IDisposable
         var candidate = ViewportEnd + delta;
         candidate = Clamp(candidate, minEnd, maxEnd);
         ViewportEnd = candidate;
+        // When panning manually in trigger mode, keep the trigger line fixed (no special handling needed).
     }
 
     public void ZoomAround(DateTimeOffset anchor, double scale, double offsetWithinWindow = 0.5)

@@ -46,6 +46,7 @@ public class RealtimeTimelineControl : Control
     private static readonly ImmutableSolidColorBrush ScaleLabelBackgroundBrush = new(Color.FromArgb(128, 0, 0, 0));
     private const int OscilloscopeMajorDivisions = 10; // Standard number of time divisions across width
     private const int OscilloscopeMinorSubdivisions = 5; // Minor subdivisions per major division
+    private static readonly Pen TriggerPen = new(new ImmutableSolidColorBrush(Color.FromArgb(224, 0, 200, 255)), 2);
 
     private Rect _summaryBounds;
     private Rect _summaryWindowBounds;
@@ -129,6 +130,47 @@ public class RealtimeTimelineControl : Control
         set => SetValue(InfoBarHeightProperty, value);
     }
 
+    private void AttachTimelineHandlers(TimelineViewModel? timeline)
+    {
+        if (timeline is null) return;
+        timeline.PropertyChanged -= TimelineOnPropertyChanged;
+        timeline.PropertyChanged += TimelineOnPropertyChanged;
+    }
+
+    private void DetachTimelineHandlers(TimelineViewModel? timeline)
+    {
+        if (timeline is null) return;
+        timeline.PropertyChanged -= TimelineOnPropertyChanged;
+    }
+
+    private void TimelineOnPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (string.IsNullOrEmpty(e.PropertyName) ||
+            e.PropertyName is nameof(TimelineViewModel.TriggerEnabled) or
+            nameof(TimelineViewModel.TriggerOffsetWithinWindow) or
+            nameof(TimelineViewModel.LastTriggerTime) or
+            nameof(TimelineViewModel.VisibleDuration) or
+            nameof(TimelineViewModel.ViewportEnd))
+        {
+            InvalidateVisual();
+        }
+    }
+
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+        if (change.Property == TimelineProperty)
+        {
+            var oldVm = change.GetOldValue<TimelineViewModel?>();
+            var newVm = change.GetNewValue<TimelineViewModel?>();
+            if (!ReferenceEquals(oldVm, newVm))
+            {
+                DetachTimelineHandlers(oldVm);
+                AttachTimelineHandlers(newVm);
+                InvalidateVisual();
+            }
+        }
+    }
 
     private void AttachTrackHandlers(IList<TimelineTrack>? tracks)
     {
@@ -318,6 +360,9 @@ public class RealtimeTimelineControl : Control
             }
         }
 
+        // Draw trigger indicator across tracks area
+        DrawTriggerIndicator(context, width, tracksContentHeight);
+
         // Current time indicator spans only tracks+labels, not info bar
         DrawCurrentTimeIndicator(context, windowStart, now, width, tracksContentHeight);
 
@@ -331,6 +376,34 @@ public class RealtimeTimelineControl : Control
         var summaryBounds = new Rect(0, summaryTop, width, Math.Max(0, height - summaryTop));
         _summaryBounds = summaryBounds;
         DrawSummaryTimeline(context, summaryBounds, windowStart, now);
+    }
+
+    private void DrawTriggerIndicator(DrawingContext context, double width, double height)
+    {
+        var vm = Timeline;
+        if (vm is null || !vm.TriggerEnabled || width <= 0 || height <= 0)
+        {
+            return;
+        }
+        var offset = double.IsNaN(vm.TriggerOffsetWithinWindow) ? 0.2 : Math.Clamp(vm.TriggerOffsetWithinWindow, 0, 1);
+        var x = Math.Clamp(width * offset, 0, width);
+        context.DrawLine(TriggerPen, new Point(x, 0), new Point(x, height));
+
+        // Optional small top indicator triangle
+        var triHeight = 8.0;
+        var triHalf = 6.0;
+        var p1 = new Point(x, 0);
+        var p2 = new Point(x - triHalf, triHeight);
+        var p3 = new Point(x + triHalf, triHeight);
+        var geo = new StreamGeometry();
+        using (var ctx = geo.Open())
+        {
+            ctx.BeginFigure(p1, true);
+            ctx.LineTo(p2);
+            ctx.LineTo(p3);
+            ctx.EndFigure(true);
+        }
+        context.DrawGeometry(new ImmutableSolidColorBrush(Color.FromArgb(160, 0, 200, 255)), null, geo);
     }
 
     private void DrawTimeGrid(DrawingContext context, DateTimeOffset windowStart, DateTimeOffset windowEnd, TimeSpan visibleDuration, double width, double height)
