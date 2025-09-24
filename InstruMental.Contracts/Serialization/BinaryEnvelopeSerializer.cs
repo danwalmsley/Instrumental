@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 using System.Formats.Cbor;
 using InstruMental.Contracts.Monitoring;
 
@@ -14,29 +12,13 @@ public static class BinaryEnvelopeSerializer
         return writer.Encode();
     }
 
-    public static bool TryDeserialize(ReadOnlySpan<byte> payload, out MonitoringEnvelope? envelope)
+    public static bool TryDeserialize(ReadOnlyMemory<byte> payload, out MonitoringEnvelope? envelope)
     {
         try
         {
-            var reader = new CborReader(payload.ToArray(), CborConformanceMode.Lax);
-            var state = reader.PeekState();
-            if (state == CborReaderState.StartMap)
-            {
-                envelope = ReadEnvelope(reader);
-                return envelope is not null && reader.BytesRemaining == 0;
-            }
-            else if (state == CborReaderState.StartArray)
-            {
-                // If a batch was sent, return the first envelope for single-deserialize API
-                var list = ReadBatch(reader);
-                envelope = list.Count > 0 ? list[0] : null;
-                return envelope is not null && reader.BytesRemaining == 0;
-            }
-            else
-            {
-                envelope = null;
-                return false;
-            }
+            var reader = new CborReader(payload, CborConformanceMode.Lax);
+            envelope = ReadEnvelope(reader);
+            return envelope is not null && reader.BytesRemaining == 0;
         }
         catch (CborContentException)
         {
@@ -50,41 +32,53 @@ public static class BinaryEnvelopeSerializer
         }
     }
 
-    public static byte[] SerializeBatch(IReadOnlyList<MonitoringEnvelope> envelopes)
-    {
-        var writer = new CborWriter();
-        writer.WriteStartArray(envelopes.Count);
-        foreach (var env in envelopes)
-        {
-            WriteEnvelope(writer, env);
-        }
-        writer.WriteEndArray();
-        return writer.Encode();
-    }
-
-    public static bool TryDeserializeBatch(ReadOnlySpan<byte> payload, out List<MonitoringEnvelope> envelopes)
+    public static bool TryDeserializeBatch(ReadOnlyMemory<byte> payload, out List<MonitoringEnvelope> envelopes)
     {
         envelopes = new List<MonitoringEnvelope>();
         try
         {
-            var reader = new CborReader(payload.ToArray(), CborConformanceMode.Lax);
-            var state = reader.PeekState();
-            if (state == CborReaderState.StartArray)
+            var reader = new CborReader(payload, CborConformanceMode.Lax);
+
+            if (reader.BytesRemaining == 0)
             {
-                envelopes = ReadBatch(reader);
-                return reader.BytesRemaining == 0;
-            }
-            else if (state == CborReaderState.StartMap)
-            {
-                var single = ReadEnvelope(reader);
-                if (single is not null)
-                {
-                    envelopes.Add(single);
-                    return reader.BytesRemaining == 0;
-                }
                 return false;
             }
-            return false;
+
+            if (reader.PeekState() == CborReaderState.StartArray)
+            {
+                var length = reader.ReadStartArray();
+                for (var i = 0; length is null || i < length; i++)
+                {
+                    if (reader.PeekState() == CborReaderState.EndArray)
+                    {
+                        reader.ReadEndArray();
+                        break;
+                    }
+
+                    var env = ReadEnvelope(reader);
+                    if (env is null)
+                    {
+                        envelopes = new List<MonitoringEnvelope>();
+                        return false;
+                    }
+                    envelopes.Add(env);
+                }
+
+                return reader.BytesRemaining == 0 && envelopes.Count > 0;
+            }
+
+            while (reader.BytesRemaining > 0)
+            {
+                var env = ReadEnvelope(reader);
+                if (env is null)
+                {
+                    envelopes = new List<MonitoringEnvelope>();
+                    return false;
+                }
+                envelopes.Add(env);
+            }
+
+            return envelopes.Count > 0;
         }
         catch (CborContentException)
         {
@@ -121,31 +115,6 @@ public static class BinaryEnvelopeSerializer
         }
 
         writer.WriteEndMap();
-    }
-
-    private static List<MonitoringEnvelope> ReadBatch(CborReader reader)
-    {
-        var length = reader.ReadStartArray();
-        var list = new List<MonitoringEnvelope>(length is { } l ? l : 4);
-        for (int i = 0; length is null || i < length; i++)
-        {
-            if (reader.PeekState() == CborReaderState.EndArray)
-            {
-                reader.ReadEndArray();
-                break;
-            }
-
-            var env = ReadEnvelope(reader);
-            if (env is not null)
-            {
-                list.Add(env);
-            }
-            else
-            {
-                reader.SkipValue();
-            }
-        }
-        return list;
     }
 
     private static void WriteMetric(CborWriter writer, MetricSample sample)

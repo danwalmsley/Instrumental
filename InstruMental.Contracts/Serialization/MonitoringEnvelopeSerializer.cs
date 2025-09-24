@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using InstruMental.Contracts.Monitoring;
 
 namespace InstruMental.Contracts.Serialization;
@@ -19,7 +18,7 @@ public static class MonitoringEnvelopeSerializer
         return encoding switch
         {
             EnvelopeEncoding.Json => JsonEnvelopeSerializer.TryDeserialize(payload, out envelope),
-            EnvelopeEncoding.Binary => BinaryEnvelopeSerializer.TryDeserialize(payload, out envelope),
+            EnvelopeEncoding.Binary => BinaryEnvelopeSerializer.TryDeserialize(payload.ToArray(), out envelope),
             _ => throw new ArgumentOutOfRangeException(nameof(encoding), encoding, null)
         };
     }
@@ -31,25 +30,40 @@ public static class MonitoringEnvelopeSerializer
             return true;
         }
 
-        return BinaryEnvelopeSerializer.TryDeserialize(payload, out envelope);
+        return BinaryEnvelopeSerializer.TryDeserialize(payload.ToArray(), out envelope);
     }
 
-    public static byte[] SerializeBatch(IReadOnlyList<MonitoringEnvelope> envelopes, EnvelopeEncoding encoding)
-        => encoding switch
+    // Prefer ReadOnlyMemory<byte> overload so callers that already have Memory avoid a copy
+    public static bool TryDeserializeBatch(ReadOnlyMemory<byte> payload, EnvelopeEncoding encoding, out List<MonitoringEnvelope> envelopes)
+    {
+        return encoding switch
         {
-            EnvelopeEncoding.Json => JsonEnvelopeSerializer.SerializeBatch(envelopes),
-            EnvelopeEncoding.Binary => BinaryEnvelopeSerializer.SerializeBatch(envelopes),
+            EnvelopeEncoding.Json => JsonEnvelopeSerializer.TryDeserializeBatch(payload.Span, out envelopes),
+            EnvelopeEncoding.Binary => BinaryEnvelopeSerializer.TryDeserializeBatch(payload, out envelopes),
             _ => throw new ArgumentOutOfRangeException(nameof(encoding), encoding, null)
         };
+    }
 
+    // ReadOnlySpan variant: will convert to Memory when needed (may allocate for binary)
     public static bool TryDeserializeBatch(ReadOnlySpan<byte> payload, EnvelopeEncoding encoding, out List<MonitoringEnvelope> envelopes)
     {
         return encoding switch
         {
             EnvelopeEncoding.Json => JsonEnvelopeSerializer.TryDeserializeBatch(payload, out envelopes),
-            EnvelopeEncoding.Binary => BinaryEnvelopeSerializer.TryDeserializeBatch(payload, out envelopes),
+            EnvelopeEncoding.Binary => BinaryEnvelopeSerializer.TryDeserializeBatch(payload.ToArray(), out envelopes),
             _ => throw new ArgumentOutOfRangeException(nameof(encoding), encoding, null)
         };
+    }
+
+    // Try deserialize without known encoding: prefer JSON first, then binary.
+    public static bool TryDeserializeBatch(ReadOnlyMemory<byte> payload, out List<MonitoringEnvelope> envelopes)
+    {
+        if (JsonEnvelopeSerializer.TryDeserializeBatch(payload.Span, out envelopes))
+        {
+            return true;
+        }
+
+        return BinaryEnvelopeSerializer.TryDeserializeBatch(payload, out envelopes);
     }
 
     public static bool TryDeserializeBatch(ReadOnlySpan<byte> payload, out List<MonitoringEnvelope> envelopes)
@@ -59,6 +73,13 @@ public static class MonitoringEnvelopeSerializer
             return true;
         }
 
-        return BinaryEnvelopeSerializer.TryDeserializeBatch(payload, out envelopes);
+        return BinaryEnvelopeSerializer.TryDeserializeBatch(payload.ToArray(), out envelopes);
     }
+
+    // Convenience byte[] overloads to avoid caller needing to construct Memory explicitly
+    public static bool TryDeserializeBatch(byte[] payload, EnvelopeEncoding encoding, out List<MonitoringEnvelope> envelopes)
+        => TryDeserializeBatch(payload.AsMemory(), encoding, out envelopes);
+
+    public static bool TryDeserializeBatch(byte[] payload, out List<MonitoringEnvelope> envelopes)
+        => TryDeserializeBatch(payload.AsMemory(), out envelopes);
 }

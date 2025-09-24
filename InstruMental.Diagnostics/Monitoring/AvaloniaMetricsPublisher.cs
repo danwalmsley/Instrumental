@@ -1,11 +1,10 @@
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Globalization;
 using System.Net.Sockets;
-using System.Threading;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Threading.Channels;
-using System.Threading.Tasks;
 using InstruMental.Contracts.Monitoring;
 using InstruMental.Contracts.Serialization;
 
@@ -15,6 +14,8 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
 {
     private readonly MeterListener _listener;
     private readonly ActivityListener _activityListener;
+    private const int ChannelCapacity = 32 * 1024;
+
     private readonly Channel<MonitoringEnvelope> _channel;
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _senderTask;
@@ -22,8 +23,6 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
     private readonly UdpClient _udpClient;
     private readonly TimeSpan _observableInterval;
     private readonly EnvelopeEncoding _encoding;
-    private readonly TimeSpan _batchFlushInterval;
-    private readonly int _maxBatchSize;
 
     public AvaloniaMetricsPublisher(InstruMentalMonitoringOptions options)
     {
@@ -37,12 +36,12 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
 
         _observableInterval = options.ObservableInterval;
         _encoding = options.Encoding;
-        _batchFlushInterval = options.BatchFlushInterval <= TimeSpan.Zero ? TimeSpan.FromMilliseconds(100) : options.BatchFlushInterval;
-        _maxBatchSize = options.MaxBatchSize > 0 ? options.MaxBatchSize : 100;
-        _channel = Channel.CreateUnbounded<MonitoringEnvelope>(new UnboundedChannelOptions
+        _channel = Channel.CreateBounded<MonitoringEnvelope>(new BoundedChannelOptions(ChannelCapacity)
         {
             SingleReader = true,
-            SingleWriter = false
+            SingleWriter = false,
+            AllowSynchronousContinuations = false,
+            FullMode = BoundedChannelFullMode.DropWrite
         });
 
         _listener = new MeterListener
@@ -88,7 +87,11 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
             }
         }, null, _observableInterval, _observableInterval);
 
-        _senderTask = Task.Run(SendAsync);
+        _senderTask = Task.Factory.StartNew(
+            SendAsync,
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning | TaskCreationOptions.DenyChildAttach,
+            TaskScheduler.Default).Unwrap();
     }
 
     private void OnMeasurement<T>(Instrument instrument, T measurement, ReadOnlySpan<KeyValuePair<string, object?>> tags, object? state)
@@ -101,39 +104,18 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
 
     private static MetricSample CreateSample<T>(Instrument instrument, T measurement, ReadOnlySpan<KeyValuePair<string, object?>> tags)
     {
-        double value = measurement switch
-        {
-            double d => d,
-            float f => f,
-            decimal dec => (double)dec,
-            long l => l,
-            ulong ul => ul,
-            int i => i,
-            uint ui => ui,
-            short s => s,
-            ushort us => us,
-            byte b => b,
-            sbyte sb => sb,
-            _ => Convert.ToDouble(measurement)
-        };
+        var value = ConvertMeasurementToDouble(in measurement);
+        Dictionary<string, string?>? tagDictionary = null;
 
-        var tagDictionary = tags.Length == 0
-            ? null
-            : new Dictionary<string, string?>(tags.Length, StringComparer.Ordinal);
-
-        if (tagDictionary is not null)
+        if (!tags.IsEmpty)
         {
-            foreach (var tag in tags)
-            {
-                tagDictionary[tag.Key] = tag.Value?.ToString();
-            }
+            tagDictionary = new Dictionary<string, string?>(tags.Length, StringComparer.Ordinal);
+            PopulateTags(tagDictionary, tags);
         }
 
         return new MetricSample
         {
-            Timestamp = ShouldUseDurationAsTimestamp(instrument, value, instrument.Unit) 
-                ? HighResolutionClock.UtcNow - TimeSpan.FromMilliseconds(value)
-                : HighResolutionClock.UtcNow,
+            Timestamp = DateTimeOffset.UtcNow,
             MeterName = instrument.Meter.Name,
             InstrumentName = instrument.Name,
             InstrumentType = instrument.GetType().Name,
@@ -145,127 +127,112 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
         };
     }
 
-    private static bool ShouldUseDurationAsTimestamp(Instrument instrument, double value, string? unit)
+    private static void PopulateTags(Dictionary<string, string?> target, ReadOnlySpan<KeyValuePair<string, object?>> tags)
     {
-        if (string.IsNullOrEmpty(unit) || !unit.Equals("ms", StringComparison.OrdinalIgnoreCase))
+        ref var start = ref MemoryMarshal.GetReference(tags);
+        for (var i = 0; i < tags.Length; i++)
         {
-            return false;
+            ref readonly var tag = ref Unsafe.Add(ref start, i);
+            ref var slot = ref CollectionsMarshal.GetValueRefOrAddDefault(target, tag.Key, out _);
+            slot = tag.Value switch
+            {
+                null => null,
+                string s => s,
+                IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
+                _ => tag.Value.ToString()
+            };
+        }
+    }
+
+    private static double ConvertMeasurementToDouble<T>(in T measurement)
+    {
+        if (typeof(T) == typeof(double))
+        {
+            return Unsafe.As<T, double>(ref Unsafe.AsRef(in measurement));
         }
 
-        var name = instrument.Name ?? string.Empty;
-        return name.EndsWith(".time", StringComparison.OrdinalIgnoreCase) && value >= 0 && double.IsFinite(value);
+        if (typeof(T) == typeof(float))
+        {
+            return Unsafe.As<T, float>(ref Unsafe.AsRef(in measurement));
+        }
+
+        if (typeof(T) == typeof(decimal))
+        {
+            var dec = Unsafe.As<T, decimal>(ref Unsafe.AsRef(in measurement));
+            return (double)dec;
+        }
+
+        if (typeof(T) == typeof(long))
+        {
+            return Unsafe.As<T, long>(ref Unsafe.AsRef(in measurement));
+        }
+
+        if (typeof(T) == typeof(ulong))
+        {
+            return Unsafe.As<T, ulong>(ref Unsafe.AsRef(in measurement));
+        }
+
+        if (typeof(T) == typeof(int))
+        {
+            return Unsafe.As<T, int>(ref Unsafe.AsRef(in measurement));
+        }
+
+        if (typeof(T) == typeof(uint))
+        {
+            return Unsafe.As<T, uint>(ref Unsafe.AsRef(in measurement));
+        }
+
+        if (typeof(T) == typeof(short))
+        {
+            return Unsafe.As<T, short>(ref Unsafe.AsRef(in measurement));
+        }
+
+        if (typeof(T) == typeof(ushort))
+        {
+            return Unsafe.As<T, ushort>(ref Unsafe.AsRef(in measurement));
+        }
+
+        if (typeof(T) == typeof(byte))
+        {
+            return Unsafe.As<T, byte>(ref Unsafe.AsRef(in measurement));
+        }
+
+        if (typeof(T) == typeof(sbyte))
+        {
+            return Unsafe.As<T, sbyte>(ref Unsafe.AsRef(in measurement));
+        }
+
+        return Convert.ToDouble(measurement, CultureInfo.InvariantCulture);
     }
 
     private async Task SendAsync()
     {
-        var batch = new List<MonitoringEnvelope>(_maxBatchSize);
-        var sw = Stopwatch.StartNew();
         try
         {
             var reader = _channel.Reader;
-            while (!_cts.IsCancellationRequested)
+            while (await reader.WaitToReadAsync(_cts.Token).ConfigureAwait(false))
             {
-                try
+                while (reader.TryRead(out var sample))
                 {
-                    // Drain available items up to max batch size
-                    while (batch.Count < _maxBatchSize && reader.TryRead(out var item))
+                    try
                     {
-                        batch.Add(item);
+                        var payload = MonitoringEnvelopeSerializer.Serialize(sample, _encoding);
+                        await _udpClient.SendAsync(payload, payload.Length).ConfigureAwait(false);
                     }
-
-                    var elapsed = sw.Elapsed;
-                    var shouldFlush = batch.Count > 0 && (batch.Count >= _maxBatchSize || elapsed >= _batchFlushInterval);
-
-                    if (shouldFlush)
+                    catch (OperationCanceledException)
                     {
-                        try
-                        {
-                            var payload = MonitoringEnvelopeSerializer.SerializeBatch(batch, _encoding);
-                            await _udpClient.SendAsync(payload, payload.Length).ConfigureAwait(false);
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            return;
-                        }
-                        catch
-                        {
-                            // Ignore send failures for individual batches.
-                        }
-                        finally
-                        {
-                            batch.Clear();
-                            sw.Restart();
-                        }
-
-                        // After flush, continue to pull any queued items immediately
-                        continue;
+                        return;
                     }
-
-                    // No flush yet. Wait for either new data or the remaining time until the next flush.
-                    if (batch.Count == 0)
+                    catch
                     {
-                        // If we have no queued items, we only need to wait for new data
-                        try
-                        {
-                            // Wait until data is available or cancellation requested
-                            await reader.WaitToReadAsync(_cts.Token).AsTask().ConfigureAwait(false);
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            break;
-                        }
+                        // Ignore individual send failures, continue streaming metrics.
                     }
-                    else
-                    {
-                        // We have items but haven't reached the flush interval yet.
-                        var remaining = _batchFlushInterval - elapsed;
-                        if (remaining < TimeSpan.Zero)
-                        {
-                            remaining = TimeSpan.Zero;
-                        }
-
-                        try
-                        {
-                            var waitTask = reader.WaitToReadAsync(_cts.Token).AsTask();
-                            var delayTask = Task.Delay(remaining, _cts.Token);
-                            await Task.WhenAny(waitTask, delayTask).ConfigureAwait(false);
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            break;
-                        }
-                    }
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-                catch
-                {
-                    // Swallow unexpected exceptions to keep the background loop alive.
-                    // Next iteration will continue processing.
                 }
             }
         }
         catch (OperationCanceledException)
         {
             // Expected during shutdown.
-        }
-        finally
-        {
-            // Final flush
-            if (batch.Count > 0)
-            {
-                try
-                {
-                    var payload = MonitoringEnvelopeSerializer.SerializeBatch(batch, _encoding);
-                    await _udpClient.SendAsync(payload, payload.Length).ConfigureAwait(false);
-                }
-                catch
-                {
-                    // ignore
-                }
-            }
         }
     }
 
@@ -307,14 +274,10 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
             }
         }
 
-        // Align timestamps to HighResolutionClock domain
-        var nowUtc = HighResolutionClock.UtcNow;
-        var startUtc = nowUtc - activity.Duration;
-
         var sample = new ActivitySample
         {
             Name = activity.DisplayName,
-            StartTimestamp = startUtc,
+            StartTimestamp = activity.StartTimeUtc,
             DurationMilliseconds = activity.Duration.TotalMilliseconds,
             Status = activity.Status.ToString(),
             StatusDescription = activity.StatusDescription,

@@ -1,23 +1,42 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
+using System.Threading;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+using Avalonia.Media.Immutable;
 using Avalonia.Media.TextFormatting;
+using Avalonia.Rendering.SceneGraph;
+using Avalonia.Skia;
 using Avalonia.Threading;
 using InstruMental.Monitor.Infrastructure;
 using Microsoft.Extensions.Logging;
+using SkiaSharp;
 
 namespace InstruMental.Monitor.Visualization;
 
 public class TimelinePlotControl : Control
 {
     private static readonly ILogger Logger = Log.For<TimelinePlotControl>();
+    private const bool EnableRenderTraceLogging = false;
+
+    private static readonly ImmutableSolidColorBrush PlotBackgroundBrush = new(Color.FromArgb(240, 12, 16, 24));
+    private static readonly ImmutablePen GridPen = new(new ImmutableSolidColorBrush(Color.FromArgb(35, 255, 255, 255)), 1);
+    private static readonly ImmutablePen TriggerMarkerPen = new(new ImmutableSolidColorBrush(Color.FromArgb(200, 255, 153, 0)), 1.5);
+    private static readonly TextLayout EmptyStateLayout = CreateStaticTextLayout("Waiting for metrics...", 16, FontWeight.Medium, Brushes.Gray, TextAlignment.Center);
+    private static readonly TextLayout TriggerLabelLayout = CreateStaticTextLayout("TRIG", 11, FontWeight.SemiBold, Brushes.Orange, TextAlignment.Center);
+
+    private static long s_textLayoutTicks;
+    private static int s_textLayoutCount;
+    private static long s_lastProfileLog;
 
     public static readonly StyledProperty<IEnumerable<TimelineSeries>?> SeriesProperty =
         AvaloniaProperty.Register<TimelinePlotControl, IEnumerable<TimelineSeries>?>(nameof(Series));
@@ -33,6 +52,8 @@ public class TimelinePlotControl : Control
     private TriggerConfiguration? _currentTriggerConfiguration;
     private DateTimeOffset _lastTriggerTimestamp;
     private bool _isHoldActive;
+    private int _renderCounter;
+    private readonly ConditionalWeakTable<TimelineSeries, SeriesTextCache> _seriesTextCaches = new();
 
     static TimelinePlotControl()
     {
@@ -254,11 +275,14 @@ public class TimelinePlotControl : Control
 
     public override void Render(DrawingContext context)
     {
-        Logger.LogTrace("Render pass bounds={Bounds}", Bounds);
+        if (EnableRenderTraceLogging)
+        {
+            Logger.LogTrace("Render pass bounds={Bounds}", Bounds);
+        }
         base.Render(context);
 
         var bounds = Bounds;
-        context.FillRectangle(new SolidColorBrush(Color.FromArgb(240, 12, 16, 24)), bounds);
+        context.FillRectangle(PlotBackgroundBrush, bounds);
 
         var allSeries = Series?.ToList();
         if (allSeries is null || allSeries.Count == 0)
@@ -309,6 +333,26 @@ public class TimelinePlotControl : Control
         }
 
         DrawTimeAxis(context, labelWidth, topPadding, plotWidth, plotHeight, startTime, endTime, window.IsTriggered, window.Anchor);
+
+        _renderCounter++;
+        if ((_renderCounter & 63) == 0)
+        {
+            var count = Volatile.Read(ref s_textLayoutCount);
+            if (count > 0)
+            {
+                var ticks = Volatile.Read(ref s_textLayoutTicks);
+                var profileNow = Stopwatch.GetTimestamp();
+                var last = Interlocked.Read(ref s_lastProfileLog);
+                if (last == 0 || profileNow - last >= Stopwatch.Frequency)
+                {
+                    var avgMicroseconds = ticks * 1_000_000.0 / (Stopwatch.Frequency * count);
+                    Logger.LogDebug("TextLayout avg {AverageMicroseconds:F2} µs over {Count} layouts", avgMicroseconds, count);
+                    Interlocked.Exchange(ref s_textLayoutTicks, 0);
+                    Interlocked.Exchange(ref s_textLayoutCount, 0);
+                    Interlocked.Exchange(ref s_lastProfileLog, profileNow);
+                }
+            }
+        }
     }
 
     private (DateTimeOffset Start, DateTimeOffset End, DateTimeOffset Anchor, bool IsTriggered) ComputeWindow(IReadOnlyList<TimelineSeries> allSeries, DateTimeOffset fallbackLatest, double visibleDurationSeconds)
@@ -407,7 +451,7 @@ public class TimelinePlotControl : Control
         }
 
         var targetSeries = trigger.TargetSeries;
-        if (targetSeries is null || !allSeries.Contains(targetSeries))
+        if (targetSeries is null || !allSeries.Contains<TimelineSeries>(targetSeries))
         {
             targetSeries = allSeries[0];
         }
@@ -1166,8 +1210,10 @@ public class TimelinePlotControl : Control
 
     private void DrawEmptyState(DrawingContext context, Rect bounds)
     {
-        var layout = CreateTextLayout("Waiting for metrics...", 16, FontWeight.Medium, Brushes.Gray, TextAlignment.Center, bounds.Width);
-        var location = new Point((bounds.Width - layout.WidthIncludingTrailingWhitespace) / 2, (bounds.Height - layout.Height) / 2);
+        var layout = EmptyStateLayout;
+        var location = new Point(
+            bounds.Left + (bounds.Width - layout.WidthIncludingTrailingWhitespace) / 2,
+            bounds.Top + (bounds.Height - layout.Height) / 2);
         layout.Draw(context, location);
     }
 
@@ -1179,248 +1225,66 @@ public class TimelinePlotControl : Control
 
     private void DrawSeriesLabel(DrawingContext context, TimelineSeries series, Rect labelRect)
     {
-        var nameLayout = CreateTextLayout(series.DisplayName, 13, FontWeight.SemiBold, series.Stroke, TextAlignment.Left, labelRect.Width);
+        var cache = GetSeriesTextCache(series);
+        var nameLayout = GetOrCreateLayout(ref cache.Name, series.DisplayName, 13, FontWeight.SemiBold, series.Stroke, TextAlignment.Left, labelRect.Width);
         nameLayout.Draw(context, labelRect.TopLeft + new Vector(12, 4));
 
         var latestText = $"{series.LatestValue:0.00} {series.Unit}".Trim();
-        var latestLayout = CreateTextLayout(latestText, 12, FontWeight.Medium, Brushes.Gainsboro, TextAlignment.Left, labelRect.Width);
+        var latestLayout = GetOrCreateLayout(ref cache.Latest, latestText, 12, FontWeight.Medium, Brushes.Gainsboro, TextAlignment.Left, labelRect.Width);
         latestLayout.Draw(context, labelRect.TopLeft + new Vector(12, labelRect.Height / 2));
     }
 
     private void DrawSeries(DrawingContext context, TimelineSeries series, Rect laneRect, DateTimeOffset startTime, DateTimeOffset endTime)
     {
-        if (series.Points.Count == 0)
+        if (!SeriesRenderBuilder.TryCreate(series, laneRect, startTime, endTime, out var builder))
         {
             return;
         }
 
-        var snapshot = series.Points.ToList();
-        var total = snapshot.Count;
-        snapshot.RemoveAll(static p => !double.IsFinite(p.Value));
-        var finite = snapshot.Count;
-
-        if (finite == 0)
+        var renderBuilder = builder;
+        if (renderBuilder is null)
         {
-            Logger.LogTrace("Renderer skipped {Display} because all {Total} points were non-finite", series.DisplayName, total);
             return;
         }
 
-        if (!TryBuildRenderPoints(snapshot, startTime, endTime, series.RenderMode, out var renderPoints, out var statsPoints))
+        using (renderBuilder)
         {
-            Logger.LogTrace("Renderer skipped {Display}: no points in visible window (total={Total}, finite={Finite})", series.DisplayName, total, finite);
-            return;
-        }
+            var operationScheduled = false;
 
-        Logger.LogTrace("Renderer drawing {Display} mode={Mode} total={Total} finite={Finite} render={Render} stats={Stats}", series.DisplayName, series.RenderMode, total, finite, renderPoints.Count, statsPoints.Count);
-
-        if (series.RenderMode == TimelineRenderMode.Step)
-        {
-            DrawStepSeries(context, series, laneRect, startTime, endTime, renderPoints, statsPoints);
-        }
-        else
-        {
-            DrawLineSeries(context, series, laneRect, startTime, endTime, renderPoints, statsPoints);
-        }
-    }
-
-    private static bool TryBuildRenderPoints(List<MetricPoint> source, DateTimeOffset startTime, DateTimeOffset endTime, TimelineRenderMode mode, out List<MetricPoint> renderPoints, out List<MetricPoint> statsPoints)
-    {
-        renderPoints = new List<MetricPoint>();
-        statsPoints = new List<MetricPoint>();
-
-        if (source.Count == 0)
-        {
-            return false;
-        }
-
-        MetricPoint lastBefore = default;
-        var hasLastBefore = false;
-
-        for (var i = source.Count - 1; i >= 0; i--)
-        {
-            var candidate = source[i];
-            if (candidate.Timestamp < startTime)
+            if (renderBuilder.PointCount >= 2)
             {
-                lastBefore = candidate;
-                hasLastBefore = true;
-                break;
-            }
-        }
-
-        if (hasLastBefore)
-        {
-            renderPoints.Add(lastBefore);
-        }
-
-        foreach (var point in source)
-        {
-            if (point.Timestamp < startTime || point.Timestamp > endTime)
-            {
-                continue;
+                var operation = renderBuilder.CreateSkiaOperation(series);
+                if (operation is not null)
+                {
+                    context.Custom(operation);
+                    operationScheduled = true;
+                }
             }
 
-            renderPoints.Add(point);
-            statsPoints.Add(point);
-        }
-
-        if (renderPoints.Count == 0)
-        {
-            return false;
-        }
-
-        if (mode == TimelineRenderMode.Step)
-        {
-            if (renderPoints.Count > 0)
+            if (!operationScheduled)
             {
-                var first = renderPoints[0];
-                if (first.Timestamp < startTime)
-                {
-                    first = new MetricPoint(startTime, first.Value, first.Tags);
-                    renderPoints[0] = first;
-                }
-
-                var last = renderPoints[^1];
-                if (last.Timestamp < endTime)
-                {
-                    last = new MetricPoint(endTime, last.Value, last.Tags);
-                    renderPoints.Add(last);
-                }
-
-                if (renderPoints.Count == 1)
-                {
-                    var clone = new MetricPoint(endTime, renderPoints[0].Value, renderPoints[0].Tags);
-                    renderPoints.Add(clone);
-                    last = clone;
-                }
-
-                AddStatPoint(statsPoints, first);
-                AddStatPoint(statsPoints, renderPoints[^1]);
+                renderBuilder.DrawFallback(context, series);
             }
-        }
 
-        if (statsPoints.Count == 0)
-        {
-            statsPoints.Add(renderPoints[^1]);
-        }
+            if (series.RenderMode == TimelineRenderMode.Line && renderBuilder.HasLatestPoint)
+            {
+                context.DrawEllipse(series.Stroke, null, renderBuilder.LatestPoint, 3, 3);
+            }
 
-        return true;
-    }
-
-    private static void AddStatPoint(List<MetricPoint> statsPoints, MetricPoint point)
-    {
-        if (!statsPoints.Any(p => p.Timestamp == point.Timestamp && Math.Abs(p.Value - point.Value) < 0.0001))
-        {
-            statsPoints.Add(point);
+        var cache = GetSeriesTextCache(series);
+        DrawRangeAnnotations(context, laneRect, renderBuilder.Min, renderBuilder.Max, series, cache);
         }
     }
 
-    private void DrawLineSeries(DrawingContext context, TimelineSeries series, Rect laneRect, DateTimeOffset startTime, DateTimeOffset endTime, IList<MetricPoint> renderPoints, IList<MetricPoint> statsPoints)
+    private void DrawRangeAnnotations(DrawingContext context, Rect laneRect, double min, double max, TimelineSeries series, SeriesTextCache cache)
     {
-        var min = statsPoints.Min(p => p.Value);
-        var max = statsPoints.Max(p => p.Value);
-
-        if (Math.Abs(max - min) < 0.001)
-        {
-            max = min + 1;
-            min -= 0.5;
-        }
-
-        var latest = renderPoints[^1];
-        var latestPoint = MapPoint(latest, laneRect, startTime, endTime, min, max);
-
-        if (renderPoints.Count == 1)
-        {
-            context.DrawEllipse(series.Stroke, null, latestPoint, 4, 4);
-            DrawRangeAnnotations(context, laneRect, min, max, series);
-            return;
-        }
-
-        var geometry = new StreamGeometry();
-        using var ctx = geometry.Open();
-
-        var first = renderPoints[0];
-        var firstPoint = MapPoint(first, laneRect, startTime, endTime, min, max);
-        ctx.BeginFigure(firstPoint, false);
-
-        for (var i = 1; i < renderPoints.Count; i++)
-        {
-            var mapped = MapPoint(renderPoints[i], laneRect, startTime, endTime, min, max);
-            ctx.LineTo(mapped);
-        }
-
-        ctx.EndFigure(false);
-
-        var pen = new Pen(series.Stroke, 2) { LineJoin = PenLineJoin.Round };
-        context.DrawGeometry(null, pen, geometry);
-
-        context.DrawEllipse(series.Stroke, null, latestPoint, 3, 3);
-
-        DrawRangeAnnotations(context, laneRect, min, max, series);
-    }
-
-    private void DrawStepSeries(DrawingContext context, TimelineSeries series, Rect laneRect, DateTimeOffset startTime, DateTimeOffset endTime, IList<MetricPoint> renderPoints, IList<MetricPoint> statsPoints)
-    {
-        if (renderPoints.Count < 2)
-        {
-            return;
-        }
-
-        var min = statsPoints.Min(p => p.Value);
-        var max = statsPoints.Max(p => p.Value);
-
-        if (Math.Abs(max - min) < 0.001)
-        {
-            max = min + 1;
-            min -= 0.5;
-        }
-
-        var geometry = new StreamGeometry();
-        using var ctx = geometry.Open();
-
-        var first = renderPoints[0];
-        var firstPoint = MapPoint(first, laneRect, startTime, endTime, min, max);
-        ctx.BeginFigure(firstPoint, false);
-
-        for (var i = 1; i < renderPoints.Count; i++)
-        {
-            var prev = renderPoints[i - 1];
-            var current = renderPoints[i];
-
-            var prevPoint = MapPoint(prev, laneRect, startTime, endTime, min, max);
-            var currentPoint = MapPoint(current, laneRect, startTime, endTime, min, max);
-
-            ctx.LineTo(new Point(currentPoint.X, prevPoint.Y));
-            ctx.LineTo(currentPoint);
-        }
-
-        ctx.EndFigure(false);
-
-        var pen = new Pen(series.Stroke, 2) { LineJoin = PenLineJoin.Miter };
-        context.DrawGeometry(null, pen, geometry);
-
-        DrawRangeAnnotations(context, laneRect, min, max, series);
-    }
-
-    private Point MapPoint(MetricPoint point, Rect laneRect, DateTimeOffset startTime, DateTimeOffset endTime, double min, double max)
-    {
-        var totalSeconds = Math.Max(1e-9, (endTime - startTime).TotalSeconds);
-        var elapsed = (point.Timestamp - startTime).TotalSeconds;
-        var progress = Math.Clamp(elapsed / totalSeconds, 0, 1);
-        var x = laneRect.Left + progress * laneRect.Width;
-        var normalized = (point.Value - min) / (max - min);
-        var y = laneRect.Bottom - normalized * (laneRect.Height - 12) - 6;
-        return new Point(x, y);
-    }
-
-    private void DrawRangeAnnotations(DrawingContext context, Rect laneRect, double min, double max, TimelineSeries series)
-    {
-        var minLayout = CreateTextLayout($"min {min:0.00}", 11, FontWeight.Normal, Brushes.Gray, TextAlignment.Right, laneRect.Width);
+        var minLayout = GetOrCreateLayout(ref cache.Min, $"min {min:0.00}", 11, FontWeight.Normal, Brushes.Gray, TextAlignment.Right, laneRect.Width);
         minLayout.Draw(context, new Point(laneRect.Right - minLayout.WidthIncludingTrailingWhitespace - 4, laneRect.Bottom - minLayout.Height - 2));
 
-        var maxLayout = CreateTextLayout($"max {max:0.00}", 11, FontWeight.Normal, Brushes.Gray, TextAlignment.Right, laneRect.Width);
+        var maxLayout = GetOrCreateLayout(ref cache.Max, $"max {max:0.00}", 11, FontWeight.Normal, Brushes.Gray, TextAlignment.Right, laneRect.Width);
         maxLayout.Draw(context, new Point(laneRect.Right - maxLayout.WidthIncludingTrailingWhitespace - 4, laneRect.Top + 2));
 
-        var avgLayout = CreateTextLayout($"avg {series.Average:0.00}", 11, FontWeight.Normal, Brushes.Gray, TextAlignment.Right, laneRect.Width);
+        var avgLayout = GetOrCreateLayout(ref cache.Avg, $"avg {series.Average:0.00}", 11, FontWeight.Normal, Brushes.Gray, TextAlignment.Right, laneRect.Width);
         avgLayout.Draw(context, new Point(laneRect.Right - avgLayout.WidthIncludingTrailingWhitespace - 4, laneRect.Center.Y - avgLayout.Height / 2));
     }
 
@@ -1434,14 +1298,13 @@ public class TimelinePlotControl : Control
 
     private void DrawTimeGrid(DrawingContext context, double labelWidth, double topPadding, double plotWidth, double plotHeight, DateTimeOffset startTime, DateTimeOffset endTime)
     {
-        var gridPen = new Pen(new SolidColorBrush(Color.FromArgb(35, 255, 255, 255)), 1);
         var steps = 6;
 
         for (var i = 0; i <= steps; i++)
         {
             var progress = (double)i / steps;
             var x = labelWidth + progress * plotWidth;
-            context.DrawLine(gridPen, new Point(x, topPadding), new Point(x, topPadding + plotHeight));
+            context.DrawLine(GridPen, new Point(x, topPadding), new Point(x, topPadding + plotHeight));
         }
     }
 
@@ -1453,10 +1316,9 @@ public class TimelinePlotControl : Control
         }
 
         var x = MapTimeToX(anchorTime, labelWidth, plotWidth, startTime, endTime);
-        var pen = new Pen(new SolidColorBrush(Color.FromArgb(200, 255, 153, 0)), 1.5);
-        context.DrawLine(pen, new Point(x, topPadding), new Point(x, topPadding + plotHeight));
+        context.DrawLine(TriggerMarkerPen, new Point(x, topPadding), new Point(x, topPadding + plotHeight));
 
-        var label = CreateTextLayout("TRIG", 11, FontWeight.SemiBold, Brushes.Orange, TextAlignment.Center, 40);
+        var label = TriggerLabelLayout;
         label.Draw(context, new Point(x - label.WidthIncludingTrailingWhitespace / 2, topPadding - label.Height - 2));
     }
 
@@ -1485,6 +1347,440 @@ public class TimelinePlotControl : Control
             var textLayout = CreateTextLayout(label, 11, FontWeight.Normal, Brushes.Gray, TextAlignment.Center, 80);
             var position = new Point(x - textLayout.WidthIncludingTrailingWhitespace / 2, topPadding + plotHeight + 6);
             textLayout.Draw(context, position);
+        }
+    }
+
+    private sealed class SeriesRenderBuilder : IDisposable
+    {
+        private readonly TimelineSeries _series;
+        private readonly Rect _laneRect;
+        private readonly DateTimeOffset _startTime;
+        private readonly DateTimeOffset _endTime;
+        private readonly TimelineRenderMode _mode;
+
+        private Point[]? _points;
+        private SKPoint[]? _skPoints;
+        private int _count;
+        private bool _skTransferred;
+        private Point _latestPoint;
+        private bool _hasLatest;
+
+        private SeriesRenderBuilder(TimelineSeries series, Rect laneRect, DateTimeOffset startTime, DateTimeOffset endTime)
+        {
+            _series = series;
+            _laneRect = laneRect;
+            _startTime = startTime;
+            _endTime = endTime;
+            _mode = series.RenderMode;
+        }
+
+        public static bool TryCreate(TimelineSeries series, Rect laneRect, DateTimeOffset startTime, DateTimeOffset endTime, out SeriesRenderBuilder? builder)
+        {
+            var instance = new SeriesRenderBuilder(series, laneRect, startTime, endTime);
+            if (!instance.Build())
+            {
+                instance.Dispose();
+                builder = null;
+                return false;
+            }
+
+            builder = instance;
+            return true;
+        }
+
+        public double Min { get; private set; }
+
+        public double Max { get; private set; }
+
+        public int PointCount => _count;
+
+        public bool HasLatestPoint => _hasLatest;
+
+        public Point LatestPoint => _latestPoint;
+
+        private bool Build()
+        {
+            var source = _series.Points;
+            var total = source.Count;
+            if (total == 0)
+            {
+                return false;
+            }
+
+            var metricsPool = ArrayPool<MetricPoint>.Shared;
+            var buffer = metricsPool.Rent(total + 2);
+            var length = 0;
+            MetricPoint? lastBefore = null;
+
+            for (var i = 0; i < total; i++)
+            {
+                var point = source[i];
+                if (!double.IsFinite(point.Value) || point.Timestamp <= DateTimeOffset.MinValue)
+                {
+                    continue;
+                }
+
+                if (point.Timestamp < _startTime)
+                {
+                    lastBefore = point;
+                    continue;
+                }
+
+                if (point.Timestamp > _endTime)
+                {
+                    break;
+                }
+
+                buffer[length++] = point;
+            }
+
+            if (length == 0)
+            {
+                if (lastBefore is null)
+                {
+                    metricsPool.Return(buffer);
+                    return false;
+                }
+
+                buffer[length++] = lastBefore.Value;
+            }
+
+            if (lastBefore is not null)
+            {
+                Array.Copy(buffer, 0, buffer, 1, length);
+                buffer[0] = lastBefore.Value;
+                length++;
+            }
+
+            if (_mode == TimelineRenderMode.Step)
+            {
+                var first = buffer[0];
+                if (first.Timestamp < _startTime)
+                {
+                    buffer[0] = new MetricPoint(_startTime, first.Value, first.Tags);
+                }
+
+                var last = buffer[length - 1];
+                if (last.Timestamp < _endTime)
+                {
+                    buffer[length++] = new MetricPoint(_endTime, last.Value, last.Tags);
+                }
+
+                if (length == 1)
+                {
+                    buffer[length++] = new MetricPoint(_endTime, buffer[0].Value, buffer[0].Tags);
+                }
+            }
+            else if (length == 1 && buffer[0].Timestamp < _startTime)
+            {
+                metricsPool.Return(buffer);
+                return false;
+            }
+
+            var min = double.PositiveInfinity;
+            var max = double.NegativeInfinity;
+            var anyWindow = false;
+
+            for (var i = 0; i < length; i++)
+            {
+                var point = buffer[i];
+                if (point.Timestamp < _startTime || point.Timestamp > _endTime)
+                {
+                    continue;
+                }
+
+                var value = point.Value;
+                if (!double.IsFinite(value))
+                {
+                    continue;
+                }
+
+                anyWindow = true;
+                if (value < min)
+                {
+                    min = value;
+                }
+
+                if (value > max)
+                {
+                    max = value;
+                }
+            }
+
+            if (!anyWindow)
+            {
+                metricsPool.Return(buffer);
+                return false;
+            }
+
+            if (Math.Abs(max - min) < 0.001)
+            {
+                max = min + 1;
+                min -= 0.5;
+            }
+
+            var skPool = ArrayPool<SKPoint>.Shared;
+            var pointPool = ArrayPool<Point>.Shared;
+            var skPoints = skPool.Rent(length);
+            var avaloniaPoints = pointPool.Rent(length);
+
+            var durationSeconds = Math.Max(1e-9, (_endTime - _startTime).TotalSeconds);
+            var width = _laneRect.Width;
+            var height = Math.Max(1, _laneRect.Height - 12);
+            var left = _laneRect.Left;
+            var bottom = _laneRect.Bottom - 6;
+
+            Point latestPoint = default;
+            var hasLatest = false;
+
+            for (var i = 0; i < length; i++)
+            {
+                var metric = buffer[i];
+                var elapsed = (metric.Timestamp - _startTime).TotalSeconds;
+                var progress = Math.Clamp(elapsed / durationSeconds, 0, 1);
+                var x = left + progress * width;
+                var normalized = (metric.Value - min) / (max - min);
+                if (!double.IsFinite(normalized))
+                {
+                    normalized = 0;
+                }
+
+                var y = bottom - normalized * height;
+                var mapped = new Point(x, y);
+                avaloniaPoints[i] = mapped;
+                skPoints[i] = new SKPoint((float)x, (float)y);
+
+                if (metric.Timestamp <= _endTime)
+                {
+                    latestPoint = mapped;
+                    hasLatest = true;
+                }
+            }
+
+            if (!hasLatest && length > 0)
+            {
+                latestPoint = avaloniaPoints[length - 1];
+                hasLatest = true;
+            }
+
+            metricsPool.Return(buffer);
+
+            _points = avaloniaPoints;
+            _skPoints = skPoints;
+            _count = length;
+            _latestPoint = latestPoint;
+            _hasLatest = hasLatest;
+            Min = min;
+            Max = max;
+
+            return true;
+        }
+
+        public TimelineSeriesDrawOperation? CreateSkiaOperation(TimelineSeries series)
+        {
+            if (_skPoints is null || _count == 0)
+            {
+                return null;
+            }
+
+            if (_count < 2 && _mode != TimelineRenderMode.Step)
+            {
+                return null;
+            }
+
+            _skTransferred = true;
+            var operation = new TimelineSeriesDrawOperation(_laneRect, _skPoints, _count, series.Color, _mode);
+            _skPoints = null;
+            return operation;
+        }
+
+        public void DrawFallback(DrawingContext context, TimelineSeries series)
+        {
+            if (_points is null || _count == 0)
+            {
+                return;
+            }
+
+            if (_count == 1)
+            {
+                context.DrawEllipse(series.Stroke, null, _points[0], 4, 4);
+                return;
+            }
+
+            var geometry = new StreamGeometry();
+            using (var ctx = geometry.Open())
+            {
+                ctx.BeginFigure(_points[0], false);
+
+                if (_mode == TimelineRenderMode.Step)
+                {
+                    for (var i = 1; i < _count; i++)
+                    {
+                        var prev = _points[i - 1];
+                        var current = _points[i];
+                        ctx.LineTo(new Point(current.X, prev.Y));
+                        ctx.LineTo(current);
+                    }
+                }
+                else
+                {
+                    for (var i = 1; i < _count; i++)
+                    {
+                        ctx.LineTo(_points[i]);
+                    }
+                }
+
+                ctx.EndFigure(false);
+            }
+
+            var pen = new Pen(series.Stroke, 2)
+            {
+                LineJoin = _mode == TimelineRenderMode.Step ? PenLineJoin.Miter : PenLineJoin.Round
+            };
+
+            context.DrawGeometry(null, pen, geometry);
+        }
+
+        public void Dispose()
+        {
+            if (_points is not null)
+            {
+                ArrayPool<Point>.Shared.Return(_points);
+                _points = null;
+            }
+
+            if (!_skTransferred && _skPoints is not null)
+            {
+                ArrayPool<SKPoint>.Shared.Return(_skPoints);
+            }
+
+            _skPoints = null;
+        }
+    }
+
+    private sealed class TimelineSeriesDrawOperation : ICustomDrawOperation
+    {
+        private readonly Rect _bounds;
+        private readonly SKPoint[] _points;
+        private readonly int _count;
+        private readonly Color _color;
+        private readonly TimelineRenderMode _mode;
+
+        public TimelineSeriesDrawOperation(Rect bounds, SKPoint[] points, int count, Color color, TimelineRenderMode mode)
+        {
+            _bounds = bounds;
+            _points = points;
+            _count = count;
+            _color = color;
+            _mode = mode;
+        }
+
+        public Rect Bounds => _bounds;
+
+        public void Render(ImmediateDrawingContext context)
+        {
+            var feature = context.TryGetFeature(typeof(ISkiaSharpApiLeaseFeature)) as ISkiaSharpApiLeaseFeature;
+            if (feature is null)
+            {
+                DrawFallback(context);
+                return;
+            }
+
+            using var lease = feature.Lease();
+            var canvas = lease.SkCanvas;
+
+            using var paint = new SKPaint
+            {
+                Style = SKPaintStyle.Stroke,
+                Color = new SKColor(_color.R, _color.G, _color.B, _color.A),
+                StrokeWidth = 2f,
+                StrokeJoin = _mode == TimelineRenderMode.Step ? SKStrokeJoin.Miter : SKStrokeJoin.Round,
+                StrokeCap = SKStrokeCap.Round,
+                IsAntialias = true
+            };
+
+            if (_count <= 1 && _mode != TimelineRenderMode.Step)
+            {
+                canvas.DrawCircle(_points[0], 3f, paint);
+                return;
+            }
+
+            using var path = new SKPath();
+            path.MoveTo(_points[0]);
+
+            if (_mode == TimelineRenderMode.Step)
+            {
+                for (var i = 1; i < _count; i++)
+                {
+                    var prev = _points[i - 1];
+                    var current = _points[i];
+                    path.LineTo(new SKPoint(current.X, prev.Y));
+                    path.LineTo(current);
+                }
+            }
+            else
+            {
+                for (var i = 1; i < _count; i++)
+                {
+                    path.LineTo(_points[i]);
+                }
+            }
+
+            canvas.DrawPath(path, paint);
+        }
+
+        public void Dispose()
+        {
+            ArrayPool<SKPoint>.Shared.Return(_points);
+        }
+
+        public bool HitTest(Point p) => _bounds.Contains(p);
+
+        public bool Equals(ICustomDrawOperation? other) => ReferenceEquals(this, other);
+
+        private void DrawFallback(ImmediateDrawingContext context)
+        {
+            if (_count == 0)
+            {
+                return;
+            }
+
+            var brush = new ImmutableSolidColorBrush(_color);
+
+            if (_count == 1 && _mode != TimelineRenderMode.Step)
+            {
+                var point = new Point(_points[0].X, _points[0].Y);
+                context.DrawEllipse(brush, null, point, 3, 3);
+                return;
+            }
+
+            var pen = new Pen(new SolidColorBrush(_color), 2)
+            {
+                LineJoin = _mode == TimelineRenderMode.Step ? PenLineJoin.Miter : PenLineJoin.Round
+            }.ToImmutable();
+
+            if (_mode == TimelineRenderMode.Step)
+            {
+                for (var i = 1; i < _count; i++)
+                {
+                    var prev = _points[i - 1];
+                    var current = _points[i];
+                    var prevPoint = new Point(prev.X, prev.Y);
+                    var horizontalEnd = new Point(current.X, prev.Y);
+                    var currentPoint = new Point(current.X, current.Y);
+                    context.DrawLine(pen, prevPoint, horizontalEnd);
+                    context.DrawLine(pen, horizontalEnd, currentPoint);
+                }
+            }
+            else
+            {
+                for (var i = 1; i < _count; i++)
+                {
+                    var start = new Point(_points[i - 1].X, _points[i - 1].Y);
+                    var end = new Point(_points[i].X, _points[i].Y);
+                    context.DrawLine(pen, start, end);
+                }
+            }
         }
     }
 
@@ -1542,10 +1838,71 @@ public class TimelinePlotControl : Control
         return $"{sign}{abs * 1_000_000_000:0.###} ns";
     }
 
+    private SeriesTextCache GetSeriesTextCache(TimelineSeries series)
+        => _seriesTextCaches.GetValue(series, static _ => new SeriesTextCache());
+
+    private static TextLayout GetOrCreateLayout(ref CachedLayout cache, string text, double fontSize, FontWeight weight, IBrush brush, TextAlignment alignment, double maxWidth)
+    {
+        const double WidthTolerance = 0.5;
+
+        if (cache.Layout is not null
+            && cache.Text == text
+            && Math.Abs(cache.FontSize - fontSize) < double.Epsilon
+            && cache.Weight == weight
+            && ReferenceEquals(cache.Brush, brush)
+            && cache.Alignment == alignment
+            && Math.Abs(cache.MaxWidth - maxWidth) <= WidthTolerance)
+        {
+            return cache.Layout;
+        }
+
+        cache.Layout?.Dispose();
+        cache.Layout = CreateTextLayout(text, fontSize, weight, brush, alignment, maxWidth);
+        cache.Text = text;
+        cache.FontSize = fontSize;
+        cache.Weight = weight;
+        cache.Brush = brush;
+        cache.Alignment = alignment;
+        cache.MaxWidth = maxWidth;
+        return cache.Layout;
+    }
+
+    private sealed class SeriesTextCache
+    {
+        public CachedLayout Name = new();
+        public CachedLayout Latest = new();
+        public CachedLayout Min = new();
+        public CachedLayout Max = new();
+        public CachedLayout Avg = new();
+    }
+
+    private sealed class CachedLayout
+    {
+        public string? Text;
+        public double FontSize;
+        public FontWeight Weight;
+        public IBrush? Brush;
+        public TextAlignment Alignment;
+        public double MaxWidth;
+        public TextLayout? Layout;
+    }
+
+    private static TextLayout CreateStaticTextLayout(string text, double fontSize, FontWeight weight, IBrush brush, TextAlignment alignment)
+        => new(text, new Typeface("Inter", FontStyle.Normal, weight), fontSize, brush, alignment, TextWrapping.NoWrap, textTrimming: null, textDecorations: null, flowDirection: FlowDirection.LeftToRight, maxWidth: double.PositiveInfinity);
+
     private static TextLayout CreateTextLayout(string text, double fontSize, FontWeight weight, IBrush brush, TextAlignment alignment, double maxWidth)
     {
+        var startTicks = Stopwatch.GetTimestamp();
         var typeface = new Typeface("Inter", FontStyle.Normal, weight);
         var constraint = double.IsFinite(maxWidth) && maxWidth > 0 ? maxWidth : double.PositiveInfinity;
-        return new TextLayout(text, typeface, fontSize, brush, alignment, TextWrapping.NoWrap, textTrimming: null, textDecorations: null, flowDirection: FlowDirection.LeftToRight, maxWidth: constraint);
+        var layout = new TextLayout(text, typeface, fontSize, brush, alignment, TextWrapping.NoWrap, textTrimming: null, textDecorations: null, flowDirection: FlowDirection.LeftToRight, maxWidth: constraint);
+        var elapsed = Stopwatch.GetTimestamp() - startTicks;
+        if (elapsed > 0)
+        {
+            Interlocked.Add(ref s_textLayoutTicks, elapsed);
+            Interlocked.Increment(ref s_textLayoutCount);
+        }
+
+        return layout;
     }
 }
