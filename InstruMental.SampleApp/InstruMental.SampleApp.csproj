@@ -24,7 +24,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\InstrumentScope.EventBroadcast\InstrumentScope.EventBroadcast.csproj" />
-    <ProjectReference Include="..\InstrumentScope.Avalonia\InstrumentScope.Avalonia.csproj" />
+    <!-- Updated references -->
+    <ProjectReference Include="..\InstruMental.EventBroadcast\InstruMental.EventBroadcast.csproj" />
+    <ProjectReference Include="..\InstruMental.Avalonia\InstruMental.Avalonia.csproj" />
   </ItemGroup>
 </Project>

@@ -25,6 +25,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Metriclonia.Diagnostics\Metriclonia.Diagnostics.csproj" />
+    <!-- Updated reference -->
+    <ProjectReference Include="..\InstruMental.Diagnostics\InstruMental.Diagnostics.csproj" />
   </ItemGroup>
 </Project>

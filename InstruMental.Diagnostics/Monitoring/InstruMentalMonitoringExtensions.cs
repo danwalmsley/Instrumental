@@ -5,14 +5,14 @@ using Avalonia.Controls.ApplicationLifetimes;
 
 namespace InstruMental.Diagnostics.Monitoring;
 
-public static class MetricloniaMonitoringExtensions
+public static class InstruMentalMonitoringExtensions
 {
-    public static IDisposable AttachMetricloniaMonitoring(this Application application)
+    public static IDisposable AttachInstruMentalMonitoring(this Application application)
     {
-        return AttachMetricloniaMonitoring(application, new MetricloniaMonitoringOptions());
+        return AttachInstruMentalMonitoring(application, new InstruMentalMonitoringOptions());
     }
 
-    public static IDisposable AttachMetricloniaMonitoring(this Application application, MetricloniaMonitoringOptions options)
+    public static IDisposable AttachInstruMentalMonitoring(this Application application, InstruMentalMonitoringOptions options)
     {
         if (application is null)
         {
@@ -27,7 +27,7 @@ public static class MetricloniaMonitoringExtensions
         AppContext.SetSwitch("Avalonia.Diagnostics.Diagnostic.IsEnabled", true);
 
         var publisher = new AvaloniaMetricsPublisher(options);
-        var handle = new MetricloniaMonitoringHandle(publisher);
+        var handle = new InstruMentalMonitoringHandle(publisher);
 
         if (application.ApplicationLifetime is IControlledApplicationLifetime lifetime)
         {
@@ -37,14 +37,14 @@ public static class MetricloniaMonitoringExtensions
         return handle;
     }
 
-    private sealed class MetricloniaMonitoringHandle : IDisposable
+    private sealed class InstruMentalMonitoringHandle : IDisposable
     {
         private readonly AvaloniaMetricsPublisher _publisher;
         private IControlledApplicationLifetime? _lifetime;
         private EventHandler<ControlledApplicationLifetimeExitEventArgs>? _exitHandler;
         private int _disposed;
 
-        public MetricloniaMonitoringHandle(AvaloniaMetricsPublisher publisher)
+        public InstruMentalMonitoringHandle(AvaloniaMetricsPublisher publisher)
         {
             _publisher = publisher;
         }

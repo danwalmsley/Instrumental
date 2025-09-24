@@ -23,6 +23,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Metriclonia.Contracts\Metriclonia.Contracts.csproj" />
+    <!-- Updated reference -->
+    <ProjectReference Include="..\InstruMental.Contracts\InstruMental.Contracts.csproj" />
   </ItemGroup>
 </Project>

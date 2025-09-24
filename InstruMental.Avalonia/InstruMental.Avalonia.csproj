@@ -14,6 +14,7 @@
     <PackageReference Include="Avalonia.Desktop" Version="$(AvaloniaVersion)" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="../InstrumentScope.EventBroadcast/InstrumentScope.EventBroadcast.csproj" />
+    <!-- Updated reference -->
+    <ProjectReference Include="../InstruMental.EventBroadcast/InstruMental.EventBroadcast.csproj" />
   </ItemGroup>
 </Project>

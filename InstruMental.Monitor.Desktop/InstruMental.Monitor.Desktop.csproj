@@ -19,6 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\\Metriclonia.Monitor\\Metriclonia.Monitor.csproj" />
+    <!-- Updated reference -->
+    <ProjectReference Include="..\InstruMental.Monitor\InstruMental.Monitor.csproj" />
   </ItemGroup>
 </Project>

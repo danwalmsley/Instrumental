@@ -12,7 +12,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Metriclonia.Contracts\Metriclonia.Contracts.csproj" />
-    <ProjectReference Include="..\InstrumentScope.Avalonia\InstrumentScope.Avalonia.csproj" />
+    <!-- Updated references -->
+    <ProjectReference Include="..\InstruMental.Contracts\InstruMental.Contracts.csproj" />
+    <ProjectReference Include="..\InstruMental.Avalonia\InstruMental.Avalonia.csproj" />
   </ItemGroup>
 </Project>

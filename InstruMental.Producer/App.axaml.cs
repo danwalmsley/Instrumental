@@ -41,7 +41,7 @@ public partial class App : Application
                           ?? Environment.GetEnvironmentVariable("METRICLONIA_PAYLOAD_ENCODING");
         var encoding = ResolveEncoding(encodingEnv);
 
-        _monitoringSubscription = this.AttachMetricloniaMonitoring(new MetricloniaMonitoringOptions
+        _monitoringSubscription = this.AttachInstruMentalMonitoring(new InstruMentalMonitoringOptions
         {
             Host = host,
             Port = port,

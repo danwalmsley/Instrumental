@@ -24,7 +24,7 @@ internal static class Log
 
     public static ILogger<T> For<T>() => s_factory.CreateLogger<T>();
 
-    public static ILogger App { get; } = s_factory.CreateLogger("Metriclonia.Monitor.App");
+    public static ILogger App { get; } = s_factory.CreateLogger("InstruMental.Monitor.App");
 
     public static void Shutdown()
     {

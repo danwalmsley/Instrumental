@@ -3,7 +3,7 @@ using InstruMental.Contracts.Serialization;
 
 namespace InstruMental.Diagnostics.Monitoring;
 
-public sealed class MetricloniaMonitoringOptions
+public sealed class InstruMentalMonitoringOptions
 {
     public string Host { get; init; } = "127.0.0.1";
 

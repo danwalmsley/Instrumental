@@ -26,7 +26,7 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
     private readonly TimeSpan _batchFlushInterval;
     private readonly int _maxBatchSize;
 
-    public AvaloniaMetricsPublisher(MetricloniaMonitoringOptions options)
+    public AvaloniaMetricsPublisher(InstruMentalMonitoringOptions options)
     {
         if (options is null)
         {

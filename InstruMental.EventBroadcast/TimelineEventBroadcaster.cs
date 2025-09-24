@@ -84,9 +84,9 @@ public sealed class TimelineEventBroadcaster : IAsyncDisposable, IDisposable
         {
             // expected during disposal
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            
+            // swallow unexpected errors to keep background loop alive
         }
         finally
         {
