@@ -148,12 +148,12 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
         }
 
         var duration = TimeSpan.FromMilliseconds(sample.Value);
-        var end = sample.Timestamp;
-        var start = end - duration;
+        var start = sample.Timestamp; // producer now sets Timestamp to start for *.time (ms)
+        var end = start + duration;
         if (duration == TimeSpan.Zero)
         {
             // Render as a tiny visible pulse
-            start = end - TimeSpan.FromMilliseconds(0.25);
+            end = start + TimeSpan.FromMilliseconds(0.25);
         }
 
         var label = sample.InstrumentName;

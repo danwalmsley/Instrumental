@@ -132,7 +132,9 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
 
         return new MetricSample
         {
-            Timestamp = HighResolutionClock.UtcNow,
+            Timestamp = ShouldUseDurationAsTimestamp(instrument, value, instrument.Unit) 
+                ? HighResolutionClock.UtcNow - TimeSpan.FromMilliseconds(value)
+                : HighResolutionClock.UtcNow,
             MeterName = instrument.Meter.Name,
             InstrumentName = instrument.Name,
             InstrumentType = instrument.GetType().Name,
@@ -142,6 +144,17 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
             ValueType = typeof(T).Name,
             Tags = tagDictionary
         };
+    }
+
+    private static bool ShouldUseDurationAsTimestamp(Instrument instrument, double value, string? unit)
+    {
+        if (string.IsNullOrEmpty(unit) || !unit.Equals("ms", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var name = instrument.Name ?? string.Empty;
+        return name.EndsWith(".time", StringComparison.OrdinalIgnoreCase) && value >= 0 && double.IsFinite(value);
     }
 
     private async Task SendAsync()
