@@ -1,7 +1,7 @@
 using System;
 using System.Diagnostics;
 
-namespace InstrumentScope.Avalonia;
+namespace InstruMental.Avalonia;
 
 /// <summary>
 /// Provides a shared high-resolution clock so different instrumentors can align timestamps.

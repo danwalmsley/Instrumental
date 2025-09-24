@@ -2,7 +2,7 @@ using System;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
-namespace Metriclonia.Monitor.Visualization;
+namespace InstruMental.Monitor.Visualization;
 
 public enum TriggerMode
 {

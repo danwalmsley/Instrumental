@@ -1,7 +1,7 @@
 using System;
 using Avalonia.Controls;
 
-namespace InstrumentScope.Views;
+namespace InstruMental.Views;
 
 public partial class MainWindow : Window
 {

@@ -9,10 +9,10 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Immutable;
-using InstrumentScope.Models;
-using InstrumentScope.ViewModels;
+using InstruMental.Models;
+using InstruMental.ViewModels;
 
-namespace InstrumentScope.Controls;
+namespace InstruMental.Controls;
 
 public class RealtimeTimelineControl : Control
 {

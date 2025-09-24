@@ -5,13 +5,13 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
-using Metriclonia.Contracts.Monitoring;
-using Metriclonia.Contracts.Serialization;
-using Metriclonia.Monitor.Infrastructure;
+using InstruMental.Contracts.Monitoring;
+using InstruMental.Contracts.Serialization;
+using InstruMental.Monitor.Infrastructure;
 using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
 
-namespace Metriclonia.Monitor.Metrics;
+namespace InstruMental.Monitor.Metrics;
 
 internal sealed class UdpMetricsListener : IAsyncDisposable
 {

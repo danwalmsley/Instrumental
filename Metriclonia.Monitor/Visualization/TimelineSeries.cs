@@ -7,7 +7,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using Avalonia.Media;
 
-namespace Metriclonia.Monitor.Visualization;
+namespace InstruMental.Monitor.Visualization;
 
 public sealed class TimelineSeries : INotifyPropertyChanged
 {

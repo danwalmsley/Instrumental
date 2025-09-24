@@ -2,11 +2,11 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:vm="clr-namespace:Metriclonia.Producer.ViewModels"
-        xmlns:controls="clr-namespace:Metriclonia.Producer.Controls"
+        xmlns:vm="clr-namespace:InstruMental.Producer.ViewModels"
+        xmlns:controls="clr-namespace:InstruMental.Producer.Controls"
         mc:Ignorable="d" d:DesignWidth="1280" d:DesignHeight="768"
-        x:Class="Metriclonia.Producer.MainWindow"
-        Title="Metriclonia Producer" MinWidth="1024" MinHeight="720" x:CompileBindings="False">
+        x:Class="InstruMental.Producer.MainWindow"
+        Title="InstruMental Producer" MinWidth="1024" MinHeight="720" x:CompileBindings="False">
     <Window.DataContext>
         <vm:MainWindowViewModel/>
     </Window.DataContext>

@@ -5,7 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Threading;
 
-namespace Metriclonia.Producer.Controls;
+namespace InstruMental.Producer.Controls;
 
 public class ParticleFieldControl : Control
 {

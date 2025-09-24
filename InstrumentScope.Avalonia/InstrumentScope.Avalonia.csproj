@@ -4,6 +4,9 @@
     <Nullable>enable</Nullable>
     <AvaloniaVersion>11.3.6</AvaloniaVersion>
     <AvaloniaAccessUnstablePrivateApis>true</AvaloniaAccessUnstablePrivateApis>
+    <!-- Unified naming -->
+    <RootNamespace>InstruMental.Avalonia</RootNamespace>
+    <AssemblyName>InstruMental.Avalonia</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="$(AvaloniaVersion)" />

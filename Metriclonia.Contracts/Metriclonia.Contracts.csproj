@@ -4,6 +4,9 @@
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- Unified naming -->
+    <RootNamespace>InstruMental.Contracts</RootNamespace>
+    <AssemblyName>InstruMental.Contracts</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>

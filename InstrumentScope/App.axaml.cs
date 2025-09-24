@@ -4,10 +4,10 @@ using Avalonia.Data.Core;
 using Avalonia.Data.Core.Plugins;
 using System.Linq;
 using Avalonia.Markup.Xaml;
-using InstrumentScope.ViewModels;
-using InstrumentScope.Views;
+using InstruMental.ViewModels;
+using InstruMental.Views;
 
-namespace InstrumentScope;
+namespace InstruMental;
 
 public partial class App : Application
 {

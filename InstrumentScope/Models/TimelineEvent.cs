@@ -6,7 +6,7 @@ using Avalonia;
 using Avalonia.Media;
 using Avalonia.Media.Immutable;
 
-namespace InstrumentScope.Models;
+namespace InstruMental.Models;
 
 public class TimelineEvent : INotifyPropertyChanged
 {

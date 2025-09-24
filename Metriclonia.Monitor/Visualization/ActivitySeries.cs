@@ -5,9 +5,9 @@ using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using Avalonia.Media;
-using Metriclonia.Contracts.Monitoring;
+using InstruMental.Contracts.Monitoring;
 
-namespace Metriclonia.Monitor.Visualization;
+namespace InstruMental.Monitor.Visualization;
 
 public sealed class ActivitySeries : INotifyPropertyChanged
 {

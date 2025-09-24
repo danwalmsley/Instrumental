@@ -7,7 +7,7 @@ using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Media.TextFormatting;
 
-namespace Metriclonia.Monitor.Visualization;
+namespace InstruMental.Monitor.Visualization;
 
 public sealed class ActivityGraphControl : Control
 {

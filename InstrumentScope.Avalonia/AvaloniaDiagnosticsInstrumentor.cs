@@ -6,10 +6,10 @@ using Avalonia;
 using Avalonia.Media;
 using Avalonia.Rendering;
 using Avalonia.Threading;
-using InstrumentScope.EventBroadcast;
-using InstrumentScope.EventBroadcast.Messaging;
+using InstruMental.EventBroadcast;
+using InstruMental.EventBroadcast.Messaging;
 
-namespace InstrumentScope.Avalonia;
+namespace InstruMental.Avalonia;
 
 public sealed class AvaloniaDiagnosticsInstrumentor
 {

@@ -2,7 +2,7 @@
 using System;
 using Avalonia.ReactiveUI;
 
-namespace InstrumentScope;
+namespace InstruMental;
 
 sealed class Program
 {

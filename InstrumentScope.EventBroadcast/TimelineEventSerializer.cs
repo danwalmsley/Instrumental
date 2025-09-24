@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
-using InstrumentScope.EventBroadcast.Messaging;
+using InstruMental.EventBroadcast.Messaging;
 
-namespace InstrumentScope.EventBroadcast;
+namespace InstruMental.EventBroadcast;
 
 public static class TimelineEventSerializer
 {

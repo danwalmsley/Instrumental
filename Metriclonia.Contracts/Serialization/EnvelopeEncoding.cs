@@ -1,4 +1,4 @@
-namespace Metriclonia.Contracts.Serialization;
+namespace InstruMental.Contracts.Serialization;
 
 public enum EnvelopeEncoding
 {

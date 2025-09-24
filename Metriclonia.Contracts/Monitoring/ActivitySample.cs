@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
-namespace Metriclonia.Contracts.Monitoring;
+namespace InstruMental.Contracts.Monitoring;
 
 public sealed class ActivitySample
 {

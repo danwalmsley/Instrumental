@@ -2,9 +2,9 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:viz="clr-namespace:Metriclonia.Monitor.Visualization"
+             xmlns:viz="clr-namespace:InstruMental.Monitor.Visualization"
              mc:Ignorable="d" d:DesignWidth="960" d:DesignHeight="540"
-             x:Class="Metriclonia.Monitor.Controls.ActivityView"
+             x:Class="InstruMental.Monitor.Controls.ActivityView"
              x:CompileBindings="False">
     <TabControl ItemsSource="{Binding Activities}" Margin="0,0,0,12" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" TabStripPlacement="Left">
             <TabControl.ItemTemplate>

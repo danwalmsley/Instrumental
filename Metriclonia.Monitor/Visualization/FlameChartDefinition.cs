@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace Metriclonia.Monitor.Visualization;
+namespace InstruMental.Monitor.Visualization;
 
 public sealed class FlameChartDefinition
 {

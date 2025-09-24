@@ -4,10 +4,10 @@ using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
-using InstrumentScope.EventBroadcast;
-using InstrumentScope.EventBroadcast.Messaging;
+using InstruMental.EventBroadcast;
+using InstruMental.EventBroadcast.Messaging;
 
-namespace InstrumentScope.Avalonia;
+namespace InstruMental.Avalonia;
 
 /// <summary>
 /// Listens to published System.Diagnostics.Metrics instruments (focusing on Avalonia / .NET runtime metrics)

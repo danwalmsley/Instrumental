@@ -1,10 +1,10 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
-using Metriclonia.Monitor.Infrastructure;
+using InstruMental.Monitor.Infrastructure;
 using Microsoft.Extensions.Logging;
 
-namespace Metriclonia.Monitor;
+namespace InstruMental.Monitor;
 
 public partial class App : Application
 {

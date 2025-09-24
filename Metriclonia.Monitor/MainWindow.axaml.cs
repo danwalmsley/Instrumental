@@ -2,12 +2,12 @@ using System;
 using System.Globalization;
 using System.Threading.Tasks;
 using Avalonia.Controls;
-using Metriclonia.Contracts.Serialization;
-using Metriclonia.Monitor.Infrastructure;
-using Metriclonia.Monitor.ViewModels;
+using InstruMental.Contracts.Serialization;
+using InstruMental.Monitor.Infrastructure;
+using InstruMental.Monitor.ViewModels;
 using Microsoft.Extensions.Logging;
 
-namespace Metriclonia.Monitor;
+namespace InstruMental.Monitor;
 
 public partial class MainWindow : Window
 {

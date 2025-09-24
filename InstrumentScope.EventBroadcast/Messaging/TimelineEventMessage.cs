@@ -1,7 +1,7 @@
 using System;
 using System.Text.Json.Serialization;
 
-namespace InstrumentScope.EventBroadcast.Messaging;
+namespace InstruMental.EventBroadcast.Messaging;
 
 public sealed record TimelineEventMessage
 {

@@ -3,10 +3,10 @@ using System.Globalization;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
-using Metriclonia.Contracts.Serialization;
-using Metriclonia.Diagnostics.Monitoring;
+using InstruMental.Contracts.Serialization;
+using InstruMental.Diagnostics.Monitoring;
 
-namespace Metriclonia.Producer;
+namespace InstruMental.Producer;
 
 public partial class App : Application
 {
@@ -25,16 +25,20 @@ public partial class App : Application
             desktop.Exit += OnDesktopExit;
         }
 
-        var host = Environment.GetEnvironmentVariable("METRICLONIA_METRICS_HOST") ?? "127.0.0.1";
-        var portValue = Environment.GetEnvironmentVariable("METRICLONIA_METRICS_PORT");
-        var port = 5005;
+        var host = Environment.GetEnvironmentVariable("INSTRUMENTAL_METRICS_HOST")
+                   ?? Environment.GetEnvironmentVariable("METRICLONIA_METRICS_HOST")
+                   ?? "127.0.0.1";
 
+        var portValue = Environment.GetEnvironmentVariable("INSTRUMENTAL_METRICS_PORT")
+                        ?? Environment.GetEnvironmentVariable("METRICLONIA_METRICS_PORT");
+        var port = 5005;
         if (!string.IsNullOrWhiteSpace(portValue) && int.TryParse(portValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedPort))
         {
             port = parsedPort;
         }
 
-        var encodingEnv = Environment.GetEnvironmentVariable("METRICLONIA_PAYLOAD_ENCODING");
+        var encodingEnv = Environment.GetEnvironmentVariable("INSTRUMENTAL_PAYLOAD_ENCODING")
+                          ?? Environment.GetEnvironmentVariable("METRICLONIA_PAYLOAD_ENCODING");
         var encoding = ResolveEncoding(encodingEnv);
 
         _monitoringSubscription = this.AttachMetricloniaMonitoring(new MetricloniaMonitoringOptions

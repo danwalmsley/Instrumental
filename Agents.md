@@ -20,3 +20,5 @@ When defining resources for light or darktheme use themedictionaries
     <ResourceDictionary x:Key="Light"></ResourceDictionary>
     <ResourceDictionary x:Key="Dark"></ResourceDictionary>
 </ResourceDictionary.ThemeDictionaries>
+
+XAML namespaces prefer xmlns:name="using:namespace" over xmlns:name="clr-namespace:namespace;assembly=name"

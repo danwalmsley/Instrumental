@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using Avalonia.Media;
 using Avalonia.Threading;
 
-namespace InstrumentScope.ViewModels;
+namespace InstruMental.ViewModels;
 
 internal static class DispatcherPriorityHelper
 {

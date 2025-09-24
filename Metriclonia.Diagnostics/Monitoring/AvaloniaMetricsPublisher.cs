@@ -6,11 +6,11 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
-using InstrumentScope.Avalonia;
-using Metriclonia.Contracts.Monitoring;
-using Metriclonia.Contracts.Serialization;
+using InstruMental.Avalonia;
+using InstruMental.Contracts.Monitoring;
+using InstruMental.Contracts.Serialization;
 
-namespace Metriclonia.Diagnostics.Monitoring;
+namespace InstruMental.Diagnostics.Monitoring;
 
 internal sealed class AvaloniaMetricsPublisher : IDisposable
 {

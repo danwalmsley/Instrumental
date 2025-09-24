@@ -6,10 +6,10 @@ using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
-using InstrumentScope.Avalonia;
-using InstrumentScope.EventBroadcast;
+using InstruMental.Avalonia;
+using InstruMental.EventBroadcast;
 
-namespace InstrumentScope.SampleApp;
+namespace InstruMental.SampleApp;
 
 public sealed partial class App : Application
 {

@@ -1,7 +1,7 @@
 using System;
-using Metriclonia.Contracts.Serialization;
+using InstruMental.Contracts.Serialization;
 
-namespace Metriclonia.Diagnostics.Monitoring;
+namespace InstruMental.Diagnostics.Monitoring;
 
 public sealed class MetricloniaMonitoringOptions
 {

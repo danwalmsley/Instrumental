@@ -1,6 +1,6 @@
 using Avalonia.Controls;
 
-namespace Metriclonia.Monitor.Controls;
+namespace InstruMental.Monitor.Controls;
 
 public partial class TimelineView : UserControl
 {

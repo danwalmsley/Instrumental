@@ -6,11 +6,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Media;
 using Avalonia.Threading;
-using InstrumentScope.EventBroadcast;
-using InstrumentScope.EventBroadcast.Messaging;
-using InstrumentScope.ViewModels;
+using InstruMental.EventBroadcast;
+using InstruMental.EventBroadcast.Messaging;
+using InstruMental.ViewModels;
 
-namespace InstrumentScope.Services;
+namespace InstruMental.Services;
 
 public sealed class TimelineEventListener : IAsyncDisposable, IDisposable
 {

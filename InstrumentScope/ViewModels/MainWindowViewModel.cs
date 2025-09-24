@@ -8,18 +8,18 @@ using System.Windows.Input;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
-using InstrumentScope.Services;
+using InstruMental.Services;
 using ReactiveUI;
 using System.Reactive.Linq;
-using Metriclonia.Contracts.Monitoring;
+using InstruMental.Contracts.Monitoring;
 
-namespace InstrumentScope.ViewModels;
+namespace InstruMental.ViewModels;
 
 public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDisposable
 {
     private bool _disposed;
     private readonly List<IDisposable> _commandsToDispose = new();
-    private readonly MetricloniaActivityListener? _metricListener;
+    private readonly InstruMentalActivityListener? _metricListener;
 
     public MainWindowViewModel()
     {
@@ -40,13 +40,13 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
         }
         else
         {
-            // Listen to Metriclonia activity stream (default localhost:5005)
-            var opts = new MetricloniaActivityListenerOptions
+            // Listen to InstruMental activity stream (default localhost:5005)
+            var opts = new InstruMentalActivityListenerOptions
             {
                 ListenAddress = IPAddress.Loopback,
                 Port = 5005
             };
-            var listener = new MetricloniaActivityListener(opts);
+            var listener = new InstruMentalActivityListener(opts);
             listener.ActivityReceived += OnActivityReceived;
             listener.MetricReceived += OnMetricReceived;
             listener.Start();
@@ -107,7 +107,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
         Timeline.ApplyEventStart(activeId, "Secondary", now - TimeSpan.FromSeconds(8), "Active Event", Colors.MediumSeaGreen);
     }
 
-    private void OnActivityReceived(Metriclonia.Contracts.Monitoring.ActivitySample activity)
+    private void OnActivityReceived(ActivitySample activity)
     {
         // Map activity to a complete event on a single track.
         var track = "Avalonia Activities";

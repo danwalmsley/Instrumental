@@ -2,11 +2,11 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:controls="clr-namespace:Metriclonia.Monitor.Controls"
-        xmlns:viz="clr-namespace:Metriclonia.Monitor.Visualization"
+        xmlns:controls="clr-namespace:InstruMental.Monitor.Controls"
+        xmlns:viz="clr-namespace:InstruMental.Monitor.Visualization"
         mc:Ignorable="d" d:DesignWidth="1280" d:DesignHeight="720"
-        x:Class="Metriclonia.Monitor.MainWindow"
-        Title="Metriclonia Monitor" MinWidth="1024" MinHeight="720"
+        x:Class="InstruMental.Monitor.MainWindow"
+        Title="InstruMental Monitor" MinWidth="1024" MinHeight="720"
         x:CompileBindings="False">
     <DockPanel>
         <Border DockPanel.Dock="Top" Padding="12" Background="{DynamicResource ThemeControlMidBrush}">

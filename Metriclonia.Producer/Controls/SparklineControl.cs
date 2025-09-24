@@ -4,7 +4,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 
-namespace Metriclonia.Producer.Controls;
+namespace InstruMental.Producer.Controls;
 
 public class SparklineControl : Control
 {

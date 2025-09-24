@@ -1,8 +1,8 @@
 ﻿using System;
 using Avalonia;
-using Metriclonia.Monitor;
+using InstruMental.Monitor;
 
-namespace Metriclonia.Monitor.Desktop;
+namespace InstruMental.Monitor.Desktop;
 
 internal static class Program
 {

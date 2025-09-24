@@ -3,7 +3,7 @@ using System.Threading;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 
-namespace Metriclonia.Diagnostics.Monitoring;
+namespace InstruMental.Diagnostics.Monitoring;
 
 public static class MetricloniaMonitoringExtensions
 {

@@ -1,6 +1,6 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 
-namespace InstrumentScope.ViewModels;
+namespace InstruMental.ViewModels;
 
 public class ViewModelBase : ObservableObject
 {

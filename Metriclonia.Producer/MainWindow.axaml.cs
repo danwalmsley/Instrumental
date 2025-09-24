@@ -1,6 +1,6 @@
 using Avalonia.Controls;
 
-namespace Metriclonia.Producer;
+namespace InstruMental.Producer;
 
 public partial class MainWindow : Window
 {

@@ -5,9 +5,9 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
-using InstrumentScope.EventBroadcast.Messaging;
+using InstruMental.EventBroadcast.Messaging;
 
-namespace InstrumentScope.EventBroadcast;
+namespace InstruMental.EventBroadcast;
 
 public sealed class TimelineEventBroadcaster : IAsyncDisposable, IDisposable
 {

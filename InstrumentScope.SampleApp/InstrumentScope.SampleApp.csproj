@@ -6,6 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <AvaloniaVersion>11.3.6</AvaloniaVersion>
+    <!-- Unified naming -->
+    <RootNamespace>InstruMental.SampleApp</RootNamespace>
+    <AssemblyName>InstruMental.SampleApp</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
@@ -25,4 +28,3 @@
     <ProjectReference Include="..\InstrumentScope.Avalonia\InstrumentScope.Avalonia.csproj" />
   </ItemGroup>
 </Project>
-

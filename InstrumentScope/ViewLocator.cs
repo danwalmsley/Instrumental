@@ -1,9 +1,9 @@
 using System;
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
-using InstrumentScope.ViewModels;
+using InstruMental.ViewModels;
 
-namespace InstrumentScope;
+namespace InstruMental;
 
 public class ViewLocator : IDataTemplate
 {

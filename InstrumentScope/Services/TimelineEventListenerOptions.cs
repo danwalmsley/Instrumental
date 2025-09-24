@@ -1,7 +1,7 @@
 using System.Net;
-using InstrumentScope.EventBroadcast;
+using InstruMental.EventBroadcast;
 
-namespace InstrumentScope.Services;
+namespace InstruMental.Services;
 
 public sealed class TimelineEventListenerOptions
 {

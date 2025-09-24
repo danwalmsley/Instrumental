@@ -2,7 +2,7 @@ using System;
 using Avalonia;
 using Avalonia.ReactiveUI;
 
-namespace InstrumentScope.SampleApp;
+namespace InstruMental.SampleApp;
 
 internal static class Program
 {

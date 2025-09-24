@@ -1,7 +1,7 @@
 using System;
 using Avalonia.Media;
 
-namespace Metriclonia.Monitor.Visualization;
+namespace InstruMental.Monitor.Visualization;
 
 internal sealed class ColorPalette
 {

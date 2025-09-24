@@ -7,9 +7,9 @@ using System.Globalization;
 using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
-using InstrumentScope.Models;
+using InstruMental.Models;
 
-namespace InstrumentScope.ViewModels;
+namespace InstruMental.ViewModels;
 
 public class TimelineViewModel : ObservableObject, IDisposable
 {

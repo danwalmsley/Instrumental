@@ -8,10 +8,10 @@ using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Media.TextFormatting;
 using Avalonia.Threading;
-using Metriclonia.Monitor.Infrastructure;
+using InstruMental.Monitor.Infrastructure;
 using Microsoft.Extensions.Logging;
 
-namespace Metriclonia.Monitor.Visualization;
+namespace InstruMental.Monitor.Visualization;
 
 public sealed class FlameChartControl : Control
 {

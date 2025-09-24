@@ -1,17 +1,23 @@
 ﻿Microsoft Visual Studio Solution File, Format Version 12.00
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "InstrumentScope", "InstrumentScope\InstrumentScope.csproj", "{9A284330-7782-4B8D-89AF-0CB6F8EC6A98}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "InstruMental", "InstrumentScope\InstrumentScope.csproj", "{9A284330-7782-4B8D-89AF-0CB6F8EC6A98}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "InstrumentScope.Avalonia", "InstrumentScope.Avalonia\InstrumentScope.Avalonia.csproj", "{5F3E2B7A-45AD-4C4D-9D9C-8E4A5B07A1F1}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "InstruMental.Avalonia", "InstrumentScope.Avalonia\InstrumentScope.Avalonia.csproj", "{5F3E2B7A-45AD-4C4D-9D9C-8E4A5B07A1F1}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Metriclonia.Contracts", "Metriclonia.Contracts\Metriclonia.Contracts.csproj", "{EB196CE8-3B3C-495D-813A-EB4EC9E8DA5E}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "InstruMental.Contracts", "Metriclonia.Contracts\Metriclonia.Contracts.csproj", "{EB196CE8-3B3C-495D-813A-EB4EC9E8DA5E}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Metriclonia.Diagnostics", "Metriclonia.Diagnostics\Metriclonia.Diagnostics.csproj", "{3327E823-F221-4FDB-8AF5-C4874686C69D}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "InstruMental.Diagnostics", "Metriclonia.Diagnostics\Metriclonia.Diagnostics.csproj", "{3327E823-F221-4FDB-8AF5-C4874686C69D}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Metriclonia.Monitor", "Metriclonia.Monitor\Metriclonia.Monitor.csproj", "{CF1E1795-5090-410C-8D73-5C0A91A97C90}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "InstruMental.Monitor", "Metriclonia.Monitor\Metriclonia.Monitor.csproj", "{CF1E1795-5090-410C-8D73-5C0A91A97C90}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Metriclonia.Monitor.Desktop", "Metriclonia.Monitor.Desktop\Metriclonia.Monitor.Desktop.csproj", "{D128279F-6C10-402D-AF1F-63880BD38242}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "InstruMental.Monitor.Desktop", "Metriclonia.Monitor.Desktop\Metriclonia.Monitor.Desktop.csproj", "{D128279F-6C10-402D-AF1F-63880BD38242}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Metriclonia.Producer", "Metriclonia.Producer\Metriclonia.Producer.csproj", "{635AD966-0A47-4109-91DC-07C4ED51584E}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "InstruMental.Producer", "Metriclonia.Producer\Metriclonia.Producer.csproj", "{635AD966-0A47-4109-91DC-07C4ED51584E}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "SolutionItems", "SolutionItems", "{2A6D2358-18E9-4B55-9B63-B8752DBDB1B5}"
+	ProjectSection(SolutionItems) = preProject
+		Agents.md = Agents.md
+		README.md = README.md
+	EndProjectSection
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

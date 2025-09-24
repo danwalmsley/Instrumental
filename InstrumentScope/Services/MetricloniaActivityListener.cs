@@ -5,12 +5,12 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
-using Metriclonia.Contracts.Monitoring;
-using Metriclonia.Contracts.Serialization;
+using InstruMental.Contracts.Monitoring;
+using InstruMental.Contracts.Serialization;
 
-namespace InstrumentScope.Services;
+namespace InstruMental.Services;
 
-public sealed class MetricloniaActivityListener : IAsyncDisposable, IDisposable
+public sealed class InstruMentalActivityListener : IAsyncDisposable, IDisposable
 {
     private readonly UdpClient _udpClient;
     private readonly CancellationTokenSource _cts = new();
@@ -21,9 +21,9 @@ public sealed class MetricloniaActivityListener : IAsyncDisposable, IDisposable
         NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals
     };
 
-    public MetricloniaActivityListener(MetricloniaActivityListenerOptions? options = null)
+    public InstruMentalActivityListener(InstruMentalActivityListenerOptions? options = null)
     {
-        options ??= new MetricloniaActivityListenerOptions();
+        options ??= new InstruMentalActivityListenerOptions();
         _udpClient = new UdpClient(AddressFamily.InterNetwork);
         _udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
         if (OperatingSystem.IsWindows())
@@ -160,7 +160,7 @@ public sealed class MetricloniaActivityListener : IAsyncDisposable, IDisposable
     }
 }
 
-public sealed class MetricloniaActivityListenerOptions
+public sealed class InstruMentalActivityListenerOptions
 {
     public IPAddress ListenAddress { get; init; } = IPAddress.Any;
     public int Port { get; init; } = 5005;

@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Metriclonia.Contracts.Monitoring;
+using InstruMental.Contracts.Monitoring;
 
-namespace Metriclonia.Contracts.Serialization;
+namespace InstruMental.Contracts.Serialization;
 
 public static class JsonEnvelopeSerializer
 {

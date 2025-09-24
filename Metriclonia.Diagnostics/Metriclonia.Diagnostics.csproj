@@ -3,6 +3,9 @@
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Unified naming -->
+    <RootNamespace>InstruMental.Diagnostics</RootNamespace>
+    <AssemblyName>InstruMental.Diagnostics</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.3.6" />

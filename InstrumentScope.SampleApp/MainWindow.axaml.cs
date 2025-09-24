@@ -1,7 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
 
-namespace InstrumentScope.SampleApp;
+namespace InstruMental.SampleApp;
 
 public partial class MainWindow : Window
 {

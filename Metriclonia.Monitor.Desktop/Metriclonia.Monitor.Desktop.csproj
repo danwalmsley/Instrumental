@@ -6,6 +6,9 @@
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <!-- Unified naming -->
+    <RootNamespace>InstruMental.Monitor.Desktop</RootNamespace>
+    <AssemblyName>InstruMental.Monitor.Desktop</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>

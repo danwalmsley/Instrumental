@@ -1,7 +1,7 @@
 ﻿using Avalonia;
 using System;
 
-namespace Metriclonia.Producer;
+namespace InstruMental.Producer;
 
 class Program
 {

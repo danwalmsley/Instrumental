@@ -4,6 +4,9 @@
     <Nullable>enable</Nullable>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <!-- Unified naming -->
+    <RootNamespace>InstruMental.Monitor</RootNamespace>
+    <AssemblyName>InstruMental.Monitor</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>

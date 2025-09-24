@@ -1,6 +1,6 @@
 using System.Collections.ObjectModel;
 
-namespace InstrumentScope.Models;
+namespace InstruMental.Models;
 
 public class TimelineTrack
 {

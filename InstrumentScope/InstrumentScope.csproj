@@ -9,6 +9,9 @@
         <!-- Centralized Avalonia version -->
         <AvaloniaVersion>11.3.6</AvaloniaVersion>
         <AvaloniaAccessUnstablePrivateApis>true</AvaloniaAccessUnstablePrivateApis>
+        <!-- Unified naming -->
+        <RootNamespace>InstruMental</RootNamespace>
+        <AssemblyName>InstruMental</AssemblyName>
     </PropertyGroup>
 
     <ItemGroup>

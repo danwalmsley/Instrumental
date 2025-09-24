@@ -7,14 +7,14 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using Avalonia.Threading;
-using Metriclonia.Contracts.Monitoring;
-using Metriclonia.Contracts.Serialization;
-using Metriclonia.Monitor.Infrastructure;
-using Metriclonia.Monitor.Metrics;
-using Metriclonia.Monitor.Visualization;
+using InstruMental.Contracts.Monitoring;
+using InstruMental.Contracts.Serialization;
+using InstruMental.Monitor.Infrastructure;
+using InstruMental.Monitor.Metrics;
+using InstruMental.Monitor.Visualization;
 using Microsoft.Extensions.Logging;
 
-namespace Metriclonia.Monitor.ViewModels;
+namespace InstruMental.Monitor.ViewModels;
 
 public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDisposable
 {

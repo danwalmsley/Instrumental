@@ -1,7 +1,7 @@
 using System;
 using Microsoft.Extensions.Logging;
 
-namespace Metriclonia.Monitor.Infrastructure;
+namespace InstruMental.Monitor.Infrastructure;
 
 internal static class Log
 {

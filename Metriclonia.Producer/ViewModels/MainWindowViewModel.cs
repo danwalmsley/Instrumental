@@ -5,7 +5,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using Avalonia.Threading;
 
-namespace Metriclonia.Producer.ViewModels;
+namespace InstruMental.Producer.ViewModels;
 
 public sealed class MainWindowViewModel : INotifyPropertyChanged
 {
