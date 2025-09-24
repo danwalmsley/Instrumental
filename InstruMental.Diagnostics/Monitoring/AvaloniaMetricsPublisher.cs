@@ -70,7 +70,7 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
             ShouldListenTo = source => source.Name == DiagnosticSourceName,
             Sample = SampleAllData,
             SampleUsingParentId = SampleAllDataUsingParentId,
-            ActivityStopped = OnActivityStopped
+            ActivityStopped = OnActivityStopped,
         };
 
         ActivitySource.AddActivityListener(_activityListener);
@@ -301,10 +301,12 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
             }
         }
 
+        var startTime = HighResolutionClock.UtcNow - TimeSpan.FromMilliseconds(activity.Duration.TotalMilliseconds);
+
         var sample = new ActivitySample
         {
             Name = activity.DisplayName,
-            StartTimestamp = activity.StartTimeUtc,
+            StartTimestamp = startTime,
             DurationMilliseconds = activity.Duration.TotalMilliseconds,
             Status = activity.Status.ToString(),
             StatusDescription = activity.StatusDescription,
