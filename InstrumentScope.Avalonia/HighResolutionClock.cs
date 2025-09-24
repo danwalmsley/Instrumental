@@ -6,7 +6,7 @@ namespace InstrumentScope.Avalonia;
 /// <summary>
 /// Provides a shared high-resolution clock so different instrumentors can align timestamps.
 /// </summary>
-internal static class HighResolutionClock
+public static class HighResolutionClock
 {
     private static readonly long s_originTimestamp;
     private static readonly DateTimeOffset s_originUtc;

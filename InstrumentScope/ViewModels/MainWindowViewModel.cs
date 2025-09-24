@@ -8,29 +8,22 @@ using System.Windows.Input;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
-using InstrumentScope.EventBroadcast;
-using InstrumentScope.EventBroadcast.Messaging;
 using InstrumentScope.Services;
 using ReactiveUI;
 using System.Reactive.Linq;
-using InstrumentScope.Avalonia;
+using Metriclonia.Contracts.Monitoring;
 
 namespace InstrumentScope.ViewModels;
 
 public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDisposable
 {
-    private readonly TimelineEventListener? _listener;
-    private readonly TimelineEventBroadcaster? _broadcaster;
     private bool _disposed;
-    private CancellationTokenSource? _demoCts;
-    private Task? _demoTask;
     private readonly List<IDisposable> _commandsToDispose = new();
-    private readonly AvaloniaDiagnosticsInstrumentor _instrumentor = new();
+    private readonly MetricloniaActivityListener? _metricListener;
 
     public MainWindowViewModel()
     {
-        RunDemoCommand = RegisterCommand(ReactiveCommand.CreateFromTask(RunDemoAsync, outputScheduler: RxApp.MainThreadScheduler));
-        StartCaptureCommand = CreateCommand(Timeline.StartCapture, () => !Timeline.IsCapturing, nameof(TimelineViewModel.IsCapturing));
+        StartCaptureCommand = RegisterCommand(ReactiveCommand.Create(Timeline.StartCapture));
         StopCaptureCommand = CreateCommand(Timeline.StopCapture, () => Timeline.IsCapturing, nameof(TimelineViewModel.IsCapturing));
         ZoomInCommand = CreateCommand(() => Timeline.AdjustZoom(0.5));
         ZoomOutCommand = CreateCommand(() => Timeline.AdjustZoom(2.0));
@@ -47,17 +40,17 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
         }
         else
         {
-            var listenerOptions = new TimelineEventListenerOptions
+            // Listen to Metriclonia activity stream (default localhost:5005)
+            var opts = new MetricloniaActivityListenerOptions
             {
-                ListenAddress = IPAddress.Loopback
+                ListenAddress = IPAddress.Loopback,
+                Port = 5005
             };
-            _listener = new TimelineEventListener(Timeline, listenerOptions);
-            _listener.Start();
-            var broadcasterOptions = new TimelineEventBroadcasterOptions
-            {
-                BroadcastAddress = IPAddress.Loopback
-            };
-            _broadcaster = new TimelineEventBroadcaster(broadcasterOptions);
+            var listener = new MetricloniaActivityListener(opts);
+            listener.ActivityReceived += OnActivityReceived;
+            listener.MetricReceived += OnMetricReceived;
+            listener.Start();
+            _metricListener = listener;
         }
     }
 
@@ -87,7 +80,6 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
 
     public TimelineViewModel Timeline { get; } = new();
 
-    public ICommand RunDemoCommand { get; }
     public ICommand StartCaptureCommand { get; }
     public ICommand StopCaptureCommand { get; }
     public ICommand ZoomInCommand { get; }
@@ -115,6 +107,106 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
         Timeline.ApplyEventStart(activeId, "Secondary", now - TimeSpan.FromSeconds(8), "Active Event", Colors.MediumSeaGreen);
     }
 
+    private void OnActivityReceived(Metriclonia.Contracts.Monitoring.ActivitySample activity)
+    {
+        // Map activity to a complete event on a single track.
+        var track = "Avalonia Activities";
+        var start = activity.StartTimestamp;
+        var end = start + TimeSpan.FromMilliseconds(activity.DurationMilliseconds);
+        var label = activity.Name;
+        var color = ColorFromName(label);
+        var id = Guid.NewGuid();
+
+        global::Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            Timeline.ApplyCompleteEvent(id, track, start, end, label, color);
+        }, global::Avalonia.Threading.DispatcherPriority.Background);
+    }
+
+    private void OnMetricReceived(MetricSample sample)
+    {
+        // Only map known Avalonia duration metrics (ms) to timeline events
+        if (!string.Equals(sample.MeterName, "Avalonia.Diagnostic.Meter", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (!string.Equals(sample.Unit, "ms", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (!double.IsFinite(sample.Value) || sample.Value < 0)
+        {
+            return;
+        }
+
+        var track = ResolveTrackName(sample.InstrumentName);
+        if (track is null)
+        {
+            return; // unknown metric type -> ignore for timeline
+        }
+
+        var duration = TimeSpan.FromMilliseconds(sample.Value);
+        var end = sample.Timestamp;
+        var start = end - duration;
+        if (duration == TimeSpan.Zero)
+        {
+            // Render as a tiny visible pulse
+            start = end - TimeSpan.FromMilliseconds(0.25);
+        }
+
+        var label = sample.InstrumentName;
+        var color = ColorFromName(label);
+        var id = Guid.NewGuid();
+
+        global::Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            Timeline.ApplyCompleteEvent(id, track, start, end, label, color);
+        }, global::Avalonia.Threading.DispatcherPriority.Background);
+    }
+
+    private static string? ResolveTrackName(string instrumentName)
+    {
+        if (string.IsNullOrEmpty(instrumentName)) return null;
+        var name = instrumentName.ToLowerInvariant();
+        return name switch
+        {
+            "avalonia.comp.render.time" => "Compositor Render",
+            "avalonia.comp.update.time" => "Compositor Update",
+            "avalonia.ui.measure.time" => "UI Measure",
+            "avalonia.ui.arrange.time" => "UI Arrange",
+            "avalonia.ui.render.time" => "UI Render",
+            "avalonia.ui.input.time" => "UI Input",
+            _ => null
+        };
+    }
+
+    private static Color ColorFromName(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+        {
+            return Colors.SteelBlue;
+        }
+        // Simple deterministic hash to color mapping
+        unchecked
+        {
+            int hash = 17;
+            foreach (var ch in name)
+            {
+                hash = hash * 31 + ch;
+            }
+            byte r = (byte)(hash & 0xFF);
+            byte g = (byte)((hash >> 8) & 0xFF);
+            byte b = (byte)((hash >> 16) & 0xFF);
+            // Normalize to slightly brighter palette
+            r = (byte)(128 + (r / 2));
+            g = (byte)(128 + (g / 2));
+            b = (byte)(128 + (b / 2));
+            return Color.FromArgb(255, r, g, b);
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_disposed)
@@ -123,18 +215,6 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
         }
 
         _disposed = true;
-        
-        if (_demoTask is { } runningDemo)
-        {
-            try
-            {
-                await runningDemo.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                // Expected when cancelling the demo.
-            }
-        }
 
         foreach (var command in _commandsToDispose)
         {
@@ -144,14 +224,9 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
 
         Timeline.Dispose();
 
-        if (_listener is not null)
+        if (_metricListener is not null)
         {
-            await _listener.DisposeAsync();
-        }
-
-        if (_broadcaster is not null)
-        {
-            await _broadcaster.DisposeAsync();
+            await _metricListener.DisposeAsync();
         }
     }
 
@@ -159,89 +234,6 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
     {
         DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
-
-    public Guid BroadcastStart(string track, string label, Color color, Guid? eventId = null, Guid? parentId = null, DateTimeOffset? timestamp = null, bool applyLocally = true)
-    {
-        if (string.IsNullOrWhiteSpace(track))
-        {
-            throw new ArgumentException("Track is required.", nameof(track));
-        }
-
-        if (string.IsNullOrWhiteSpace(label))
-        {
-            throw new ArgumentException("Label is required.", nameof(label));
-        }
-
-        var id = eventId ?? Guid.NewGuid();
-        var timestampValue = timestamp ?? DateTimeOffset.UtcNow;
-
-        if (applyLocally || _broadcaster is null)
-        {
-            Timeline.ApplyEventStart(id, track, timestampValue, label, color, parentId);
-        }
-
-        if (_broadcaster is not null)
-        {
-            var colorHex = ToHex(color);
-            var start = new TimelineEventStart(id, track, label, colorHex, timestampValue, parentId);
-            _broadcaster.EnqueueStart(start);
-        }
-
-        return id;
-    }
-
-    public void BroadcastStop(Guid eventId, DateTimeOffset? timestamp = null, bool applyLocally = true)
-    {
-        var timestampValue = timestamp ?? DateTimeOffset.UtcNow;
-
-        if (applyLocally || _broadcaster is null)
-        {
-            Timeline.ApplyEventStop(eventId, timestampValue);
-        }
-
-        if (_broadcaster is not null)
-        {
-            var stop = new TimelineEventStop(eventId, timestampValue);
-            _broadcaster.EnqueueStop(stop);
-        }
-    }
-
-    private async Task RunDemoAsync(CancellationToken cancellationToken)
-    {
-        if (_broadcaster is null)
-        {
-            return; // Nothing to do in design mode or if broadcaster unavailable.
-        }
-
-        var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _demoCts = linkedCts;
-        var demoTask = _instrumentor.InstrumentAvalonia(_broadcaster, TimeSpan.FromSeconds(30), linkedCts.Token);
-        _demoTask = demoTask;
-
-        try
-        {
-            await demoTask.ConfigureAwait(false);
-        }
-        finally
-        {
-            linkedCts.Dispose();
-
-            if (ReferenceEquals(_demoTask, demoTask))
-            {
-                _demoTask = null;
-            }
-
-            if (ReferenceEquals(_demoCts, linkedCts))
-            {
-                _demoCts = null;
-            }
-        }
-    }
-
-    private static string ToHex(Color color) =>
-        color.A < byte.MaxValue
-            ? $"#{color.A:X2}{color.R:X2}{color.G:X2}{color.B:X2}"
-            : $"#{color.R:X2}{color.G:X2}{color.B:X2}";
 
     private ICommand CreateCommand(Action execute, Func<bool>? canExecuteEvaluator = null, params string[] observedTimelineProperties)
     {
@@ -278,6 +270,6 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
 
     private static T GetRequiredService<T>() where T : class
     {
-        return (T)(AvaloniaLocator.Current.GetService(typeof(T)) ?? throw new InvalidOperationException($"Service of type {typeof(T)} not found."));
+        return (T)(global::Avalonia.AvaloniaLocator.Current.GetService(typeof(T)) ?? throw new InvalidOperationException($"Service of type {typeof(T)} not found."));
     }
 }

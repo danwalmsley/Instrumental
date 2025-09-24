@@ -41,10 +41,6 @@
             <Button Content="Go Live"
                     Command="{Binding GoLiveCommand}"
                     MinWidth="90"/>
-            <Separator Margin="4,0" Width="1" Background="#40FFFFFF"/>
-            <Button Content="Run Demo"
-                    Command="{Binding RunDemoCommand}"
-                    MinWidth="100"/>
         </StackPanel>
 
         <!-- Trigger controls -->

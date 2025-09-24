@@ -1,0 +1,261 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:controls="clr-namespace:Metriclonia.Monitor.Controls"
+        xmlns:viz="clr-namespace:Metriclonia.Monitor.Visualization"
+        mc:Ignorable="d" d:DesignWidth="1280" d:DesignHeight="720"
+        x:Class="Metriclonia.Monitor.MainWindow"
+        Title="Metriclonia Monitor" MinWidth="1024" MinHeight="720"
+        x:CompileBindings="False">
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Padding="12" Background="{DynamicResource ThemeControlMidBrush}">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="24">
+                <StackPanel Orientation="Horizontal" Spacing="16">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Text="Listening" FontWeight="SemiBold"/>
+                        <TextBlock Text="{Binding ListeningPort}"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Text="Ingress" FontWeight="SemiBold"/>
+                        <TextBlock Text="{Binding IngressRate, StringFormat=\{0:0.0\}/s}"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Text="Series" FontWeight="SemiBold"/>
+                        <TextBlock Text="{Binding Series.Count}"/>
+                    </StackPanel>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <TextBlock Text="Window" FontWeight="SemiBold"/>
+                    <Slider Minimum="1" Maximum="180" Value="{Binding VisibleDurationSeconds}" Width="200"/>
+                    <TextBlock Text="{Binding VisibleDurationSeconds, StringFormat=\{0:0\} s}"/>
+                    <CheckBox Content="Pause capture" IsChecked="{Binding IsRenderingPaused}" VerticalAlignment="Center"/>
+                    <Expander Header="Trigger" Width="420" Padding="8" Background="{DynamicResource ThemeBackgroundBrush}">
+                        <ScrollViewer MaxHeight="240" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel Spacing="8">
+                                <CheckBox Content="Enabled" IsChecked="{Binding TriggerConfiguration.IsEnabled}"/>
+                                <UniformGrid Columns="2" ColumnSpacing="12" RowSpacing="6">
+                                    <StackPanel>
+                                        <TextBlock Text="Mode" FontSize="11" Foreground="Gray"/>
+                                        <ComboBox ItemsSource="{Binding TriggerModes}" SelectedItem="{Binding TriggerConfiguration.Mode}" Width="140"/>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Type" FontSize="11" Foreground="Gray"/>
+                                        <ComboBox ItemsSource="{Binding TriggerTypes}" SelectedItem="{Binding TriggerConfiguration.Type}" Width="180"/>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Slope" FontSize="11" Foreground="Gray"/>
+                                        <ComboBox ItemsSource="{Binding TriggerSlopes}" SelectedItem="{Binding TriggerConfiguration.Slope}" Width="140"/>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Polarity" FontSize="11" Foreground="Gray"/>
+                                        <ComboBox ItemsSource="{Binding TriggerPolarities}" SelectedItem="{Binding TriggerConfiguration.Polarity}" Width="140"/>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Series" FontSize="11" Foreground="Gray"/>
+                                        <ComboBox ItemsSource="{Binding Series}" SelectedItem="{Binding TriggerConfiguration.TargetSeries}" Width="200">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding DisplayName}"/>
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Holdoff (s)" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.HoldoffSeconds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                </UniformGrid>
+                                <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                                    <CheckBox Content="Auto level" IsChecked="{Binding TriggerConfiguration.AutoLevel}"/>
+                                    <CheckBox Content="Freeze on trigger" IsChecked="{Binding TriggerConfiguration.FreezeOnTrigger}"/>
+                                    <StackPanel>
+                                        <TextBlock Text="Position" FontSize="11" Foreground="Gray"/>
+                                        <Slider Minimum="0" Maximum="1" Value="{Binding TriggerConfiguration.HorizontalPosition}" Width="180" TickFrequency="0.1" IsSnapToTickEnabled="True"/>
+                                    </StackPanel>
+                                </StackPanel>
+                                <Grid ColumnDefinitions="*,*" ColumnSpacing="12" RowDefinitions="Auto,Auto" RowSpacing="8">
+                                    <StackPanel Grid.Column="0" Grid.Row="0">
+                                        <TextBlock Text="Level" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.Level, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="0">
+                                        <TextBlock Text="Hysteresis" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.Hysteresis, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="0" Grid.Row="1">
+                                        <TextBlock Text="Window Low" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.WindowLow, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="1">
+                                        <TextBlock Text="Window High" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.WindowHigh, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,*" ColumnSpacing="12" RowDefinitions="Auto,Auto" RowSpacing="8">
+                                    <StackPanel Grid.Column="0" Grid.Row="0">
+                                        <TextBlock Text="Pulse Min (s)" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.MinimumPulseWidthSeconds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="0">
+                                        <TextBlock Text="Pulse Max (s)" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.MaximumPulseWidthSeconds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="0" Grid.Row="1">
+                                        <TextBlock Text="Runt Low" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.RuntLowLevel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="1">
+                                        <TextBlock Text="Runt High" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.RuntHighLevel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,*" ColumnSpacing="12" RowDefinitions="Auto,Auto" RowSpacing="8">
+                                    <StackPanel Grid.Column="0" Grid.Row="0">
+                                        <TextBlock Text="Logic Pattern" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.LogicPattern, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="200"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="0">
+                                        <TextBlock Text="Logic Samples" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.LogicSampleLength, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="120"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="0" Grid.Row="1">
+                                        <TextBlock Text="Pattern Sequence" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.PatternSequence, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="200"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="1">
+                                        <TextBlock Text="Pattern Tol" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.PatternTolerance, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,*" ColumnSpacing="12" RowDefinitions="Auto,Auto" RowSpacing="8">
+                                    <StackPanel Grid.Column="0" Grid.Row="0">
+                                        <TextBlock Text="Serial Bits" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.SerialBitCount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="120"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="0">
+                                        <TextBlock Text="Serial Baud" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.SerialBaudRate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="0" Grid.Row="1">
+                                        <TextBlock Text="Serial Threshold" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.SerialThreshold, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="1">
+                                        <TextBlock Text="Video Line Hz" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.VideoLineFrequency, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,*" ColumnSpacing="12" RowDefinitions="Auto,Auto" RowSpacing="8">
+                                    <StackPanel Grid.Column="0" Grid.Row="0">
+                                        <TextBlock Text="Video Tol" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.VideoTolerancePercentage, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="0">
+                                        <TextBlock Text="Visual Template" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.VisualTemplate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="220"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="0" Grid.Row="1">
+                                        <TextBlock Text="Visual Tol" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.VisualTolerance, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                </Grid>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Expander>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <TabControl Margin="0,12,0,0">
+            <TabItem Header="Metrics">
+                <Grid ColumnDefinitions="280,6,*">
+                    <Border Grid.Column="0" Background="{DynamicResource ThemeControlLowBrush}" Padding="12">
+                        <Grid RowDefinitions="Auto,*">
+                            <TextBlock Grid.Row="0" Text="Active Metrics" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12"/>
+                            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                <ItemsControl ItemsSource="{Binding Series}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Padding="12" Margin="0,0,0,8" Background="{DynamicResource ThemeBackgroundBrush}" CornerRadius="8">
+                                                <StackPanel Spacing="6">
+                                                    <CheckBox IsChecked="{Binding IsVisible}" Content="{Binding DisplayName}" Foreground="{Binding Stroke}" FontWeight="SemiBold">
+                                                        <ToolTip.Tip>
+                                                            <StackPanel>
+                                                                <TextBlock Text="{Binding MeterName}" FontWeight="SemiBold"/>
+                                                                <TextBlock Text="{Binding InstrumentName}"/>
+                                                                <TextBlock Text="{Binding TagSignature, FallbackValue=No tags}" FontSize="11"/>
+                                                            </StackPanel>
+                                                        </ToolTip.Tip>
+                                                    </CheckBox>
+                                                    <TextBlock Text="{Binding Description}" FontSize="11" Foreground="Gray" TextWrapping="Wrap"/>
+                                                    <UniformGrid Columns="2" Rows="2" ColumnSpacing="12" RowSpacing="6">
+                                                        <StackPanel>
+                                                            <TextBlock Text="Latest" FontSize="11" Foreground="Gray"/>
+                                                            <TextBlock Text="{Binding LatestValue, StringFormat=\{0:0.00\}}" FontWeight="SemiBold"/>
+                                                        </StackPanel>
+                                                        <StackPanel>
+                                                            <TextBlock Text="Average" FontSize="11" Foreground="Gray"/>
+                                                            <TextBlock Text="{Binding Average, StringFormat=\{0:0.00\}}" FontWeight="SemiBold"/>
+                                                        </StackPanel>
+                                                        <StackPanel>
+                                                            <TextBlock Text="Minimum" FontSize="11" Foreground="Gray"/>
+                                                            <TextBlock Text="{Binding Minimum, StringFormat=\{0:0.00\}}" FontWeight="SemiBold"/>
+                                                        </StackPanel>
+                                                        <StackPanel>
+                                                            <TextBlock Text="Maximum" FontSize="11" Foreground="Gray"/>
+                                                            <TextBlock Text="{Binding Maximum, StringFormat=\{0:0.00\}}" FontWeight="SemiBold"/>
+                                                        </StackPanel>
+                                                    </UniformGrid>
+                                                    <TextBlock Text="{Binding LastTimestamp, StringFormat=\{0:HH:mm:ss\}}" FontSize="11" Foreground="Gray" HorizontalAlignment="Right"/>
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </Grid>
+                    </Border>
+
+                    <GridSplitter Grid.Column="1" Background="{DynamicResource ThemeControlHighBrush}" HorizontalAlignment="Stretch"/>
+
+                    <Border Grid.Column="2" Background="{DynamicResource ThemeBackgroundBrush}" Margin="0,0,12,12" CornerRadius="12" Padding="0">
+                        <controls:TimelineView DataContext="{Binding}"/>
+                    </Border>
+                </Grid>
+            </TabItem>
+            <TabItem Header="Activities">
+                <controls:ActivityView DataContext="{Binding}"/>
+            </TabItem>
+            <TabItem Header="Flame Charts">
+                <TabControl Margin="0,0,0,12" Padding="0" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" TabStripPlacement="Left">
+                    <TabItem Header="Overview">
+                        <Border Margin="12" Padding="12" Background="{DynamicResource ThemeControlLowBrush}" CornerRadius="12">
+                            <viz:MasterFlameChartControl Series="{Binding Series}" Activities="{Binding Activities}" VisibleDurationSeconds="{Binding VisibleDurationSeconds}"/>
+                        </Border>
+                    </TabItem>
+                    <TabItem Header="Rendering">
+                        <Border Margin="12" Padding="12" Background="{DynamicResource ThemeControlLowBrush}" CornerRadius="12">
+                            <viz:FlameChartControl Definition="{x:Static viz:FlameChartDefinitions.Rendering}" Series="{Binding Series}" Activities="{Binding Activities}" VisibleDurationSeconds="{Binding VisibleDurationSeconds}"/>
+                        </Border>
+                    </TabItem>
+                    <TabItem Header="Layout">
+                        <Border Margin="12" Padding="12" Background="{DynamicResource ThemeControlLowBrush}" CornerRadius="12">
+                            <viz:FlameChartControl Definition="{x:Static viz:FlameChartDefinitions.Layout}" Series="{Binding Series}" Activities="{Binding Activities}" VisibleDurationSeconds="{Binding VisibleDurationSeconds}"/>
+                        </Border>
+                    </TabItem>
+                    <TabItem Header="Input">
+                        <Border Margin="12" Padding="12" Background="{DynamicResource ThemeControlLowBrush}" CornerRadius="12">
+                            <viz:FlameChartControl Definition="{x:Static viz:FlameChartDefinitions.Input}" Series="{Binding Series}" Activities="{Binding Activities}" VisibleDurationSeconds="{Binding VisibleDurationSeconds}"/>
+                        </Border>
+                    </TabItem>
+                    <TabItem Header="Resources">
+                        <Border Margin="12" Padding="12" Background="{DynamicResource ThemeControlLowBrush}" CornerRadius="12">
+                            <viz:FlameChartControl Definition="{x:Static viz:FlameChartDefinitions.Resources}" Series="{Binding Series}" Activities="{Binding Activities}" VisibleDurationSeconds="{Binding VisibleDurationSeconds}"/>
+                        </Border>
+                    </TabItem>
+                </TabControl>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
+</Window>
