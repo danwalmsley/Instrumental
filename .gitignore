@@ -415,3 +415,4 @@ FodyWeavers.xsd
 .idea/
 *.sln.iml
 
+.DS_Store
