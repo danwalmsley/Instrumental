@@ -6,7 +6,6 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
-using InstruMental.Avalonia;
 using InstruMental.Contracts.Monitoring;
 using InstruMental.Contracts.Serialization;
 

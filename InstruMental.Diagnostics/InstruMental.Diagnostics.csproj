@@ -14,6 +14,5 @@
   <ItemGroup>
     <!-- Updated references -->
     <ProjectReference Include="..\InstruMental.Contracts\InstruMental.Contracts.csproj" />
-    <ProjectReference Include="..\InstruMental.Avalonia\InstruMental.Avalonia.csproj" />
   </ItemGroup>
 </Project>

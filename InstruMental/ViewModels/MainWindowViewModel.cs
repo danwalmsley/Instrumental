@@ -125,13 +125,8 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
 
     private void OnMetricReceived(MetricSample sample)
     {
-        // Only map known Avalonia duration metrics (ms) to timeline events
-        if (!string.Equals(sample.MeterName, "Avalonia.Diagnostic.Meter", StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        if (!string.Equals(sample.Unit, "ms", StringComparison.OrdinalIgnoreCase))
+        // Only map Avalonia duration metrics to timeline events
+        if (string.IsNullOrEmpty(sample.MeterName) || !sample.MeterName.StartsWith("Avalonia", StringComparison.Ordinal))
         {
             return;
         }
@@ -141,14 +136,23 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
             return;
         }
 
-        var track = ResolveTrackName(sample.InstrumentName);
+        // Accept if unit is ms, or if instrument name ends with .time (common for duration metrics)
+        var name = sample.InstrumentName ?? string.Empty;
+        var unitOk = !string.IsNullOrEmpty(sample.Unit) && sample.Unit.Equals("ms", StringComparison.OrdinalIgnoreCase);
+        var looksLikeDuration = name.EndsWith(".time", StringComparison.OrdinalIgnoreCase);
+        if (!(unitOk || looksLikeDuration))
+        {
+            return;
+        }
+
+        var track = ResolveTrackName(name) ?? ResolveFallbackTrack(name);
         if (track is null)
         {
             return; // unknown metric type -> ignore for timeline
         }
 
         var duration = TimeSpan.FromMilliseconds(sample.Value);
-        var start = sample.Timestamp; // producer now sets Timestamp to start for *.time (ms)
+        var start = sample.Timestamp; // producer sets start for *.time (ms); otherwise treat as start
         var end = start + duration;
         if (duration == TimeSpan.Zero)
         {
@@ -156,7 +160,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
             end = start + TimeSpan.FromMilliseconds(0.25);
         }
 
-        var label = sample.InstrumentName;
+        var label = name;
         var color = ColorFromName(label);
         var id = Guid.NewGuid();
 
@@ -180,6 +184,18 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
             "avalonia.ui.input.time" => "UI Input",
             _ => null
         };
+    }
+
+    private static string? ResolveFallbackTrack(string instrumentName)
+    {
+        var name = instrumentName.ToLowerInvariant();
+        if (name.Contains(".measure.")) return "UI Measure";
+        if (name.Contains(".arrange.")) return "UI Arrange";
+        if (name.Contains(".render.")) return "UI Render";
+        if (name.Contains(".input.")) return "UI Input";
+        if (name.Contains("comp.render")) return "Compositor Render";
+        if (name.Contains("comp.update")) return "Compositor Update";
+        return null;
     }
 
     private static Color ColorFromName(string name)

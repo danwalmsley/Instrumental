@@ -1,9 +1,7 @@
-using System;
-using System.Collections.Generic;
 using Avalonia.Media;
 using Avalonia.Threading;
 
-namespace InstruMental.Avalonia;
+namespace InstruMental.Diagnostics.Monitoring;
 
 internal static class DispatcherPriorityHelper
 {

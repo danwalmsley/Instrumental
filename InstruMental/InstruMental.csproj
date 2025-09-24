@@ -35,13 +35,6 @@
 
     <ItemGroup>
         <!-- Updated references to InstruMental projects -->
-        <ProjectReference Include="..\InstruMental.Avalonia\InstruMental.Avalonia.csproj" />
         <ProjectReference Include="..\InstruMental.Contracts\InstruMental.Contracts.csproj" />
-    </ItemGroup>
-
-    <!-- Exclude legacy InstrumentScope listener files -->
-    <ItemGroup>
-        <Compile Remove="Services/TimelineEventListener.cs" />
-        <Compile Remove="Services/TimelineEventListenerOptions.cs" />
     </ItemGroup>
 </Project>

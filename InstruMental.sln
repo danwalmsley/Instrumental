@@ -1,8 +1,6 @@
 ﻿Microsoft Visual Studio Solution File, Format Version 12.00
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "InstruMental", "InstruMental\InstruMental.csproj", "{9A284330-7782-4B8D-89AF-0CB6F8EC6A98}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "InstruMental.Avalonia", "InstruMental.Avalonia\InstruMental.Avalonia.csproj", "{5F3E2B7A-45AD-4C4D-9D9C-8E4A5B07A1F1}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "InstruMental.Contracts", "InstruMental.Contracts\InstruMental.Contracts.csproj", "{EB196CE8-3B3C-495D-813A-EB4EC9E8DA5E}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "InstruMental.Diagnostics", "InstruMental.Diagnostics\InstruMental.Diagnostics.csproj", "{3327E823-F221-4FDB-8AF5-C4874686C69D}"
@@ -41,18 +39,6 @@ Global
 		{9A284330-7782-4B8D-89AF-0CB6F8EC6A98}.Release|x64.Build.0 = Release|Any CPU
 		{9A284330-7782-4B8D-89AF-0CB6F8EC6A98}.Release|x86.ActiveCfg = Release|Any CPU
 		{9A284330-7782-4B8D-89AF-0CB6F8EC6A98}.Release|x86.Build.0 = Release|Any CPU
-		{5F3E2B7A-45AD-4C4D-9D9C-8E4A5B07A1F1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{5F3E2B7A-45AD-4C4D-9D9C-8E4A5B07A1F1}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{5F3E2B7A-45AD-4C4D-9D9C-8E4A5B07A1F1}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{5F3E2B7A-45AD-4C4D-9D9C-8E4A5B07A1F1}.Debug|x64.Build.0 = Debug|Any CPU
-		{5F3E2B7A-45AD-4C4D-9D9C-8E4A5B07A1F1}.Debug|x86.ActiveCfg = Debug|Any CPU
-		{5F3E2B7A-45AD-4C4D-9D9C-8E4A5B07A1F1}.Debug|x86.Build.0 = Debug|Any CPU
-		{5F3E2B7A-45AD-4C4D-9D9C-8E4A5B07A1F1}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{5F3E2B7A-45AD-4C4D-9D9C-8E4A5B07A1F1}.Release|Any CPU.Build.0 = Release|Any CPU
-		{5F3E2B7A-45AD-4C4D-9D9C-8E4A5B07A1F1}.Release|x64.ActiveCfg = Release|Any CPU
-		{5F3E2B7A-45AD-4C4D-9D9C-8E4A5B07A1F1}.Release|x64.Build.0 = Release|Any CPU
-		{5F3E2B7A-45AD-4C4D-9D9C-8E4A5B07A1F1}.Release|x86.ActiveCfg = Release|Any CPU
-		{5F3E2B7A-45AD-4C4D-9D9C-8E4A5B07A1F1}.Release|x86.Build.0 = Release|Any CPU
 		{EB196CE8-3B3C-495D-813A-EB4EC9E8DA5E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{EB196CE8-3B3C-495D-813A-EB4EC9E8DA5E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{EB196CE8-3B3C-495D-813A-EB4EC9E8DA5E}.Debug|x64.ActiveCfg = Debug|Any CPU
