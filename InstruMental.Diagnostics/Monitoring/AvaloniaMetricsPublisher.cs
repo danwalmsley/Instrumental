@@ -113,9 +113,36 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
             PopulateTags(tagDictionary, tags);
         }
 
+        // If the instrument explicitly uses milliseconds and the instrument name indicates a duration (ends with ".time"),
+        // interpret the measurement value as a duration in milliseconds and compute the event timestamp as "now - duration" using the
+        // high-resolution clock. Otherwise, use the current UTC time.
+        DateTimeOffset timestamp = HighResolutionClock.UtcNow;
+        try
+        {
+            var unit = instrument.Unit;
+            var name = instrument.Name;
+
+            if (!string.IsNullOrEmpty(unit) && !string.IsNullOrEmpty(name) &&
+                string.Equals(unit, "ms", StringComparison.OrdinalIgnoreCase) &&
+                name.EndsWith(".time", StringComparison.Ordinal))
+            {
+                // HighResolutionClock.UtcNow provides a high-res DateTimeOffset. Subtract value (milliseconds).
+                // Guard against NaN/Infinity and extremely large values.
+                if (!double.IsNaN(value) && !double.IsInfinity(value))
+                {
+                    timestamp = HighResolutionClock.UtcNow - TimeSpan.FromMilliseconds(value);
+                }
+            }
+        }
+        catch
+        {
+            // If anything goes wrong computing timestamp from the value, fall back to UtcNow.
+            timestamp = HighResolutionClock.UtcNow;
+        }
+
         return new MetricSample
         {
-            Timestamp = DateTimeOffset.UtcNow,
+            Timestamp = timestamp,
             MeterName = instrument.Meter.Name,
             InstrumentName = instrument.Name,
             InstrumentType = instrument.GetType().Name,
