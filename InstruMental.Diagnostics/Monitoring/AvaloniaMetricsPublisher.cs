@@ -165,42 +165,85 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
             var reader = _channel.Reader;
             while (!_cts.IsCancellationRequested)
             {
-                // Pull as many as available up to max batch size
-                while (batch.Count < _maxBatchSize && reader.TryRead(out var item))
+                try
                 {
-                    batch.Add(item);
+                    // Drain available items up to max batch size
+                    while (batch.Count < _maxBatchSize && reader.TryRead(out var item))
+                    {
+                        batch.Add(item);
+                    }
+
+                    var elapsed = sw.Elapsed;
+                    var shouldFlush = batch.Count > 0 && (batch.Count >= _maxBatchSize || elapsed >= _batchFlushInterval);
+
+                    if (shouldFlush)
+                    {
+                        try
+                        {
+                            var payload = MonitoringEnvelopeSerializer.SerializeBatch(batch, _encoding);
+                            await _udpClient.SendAsync(payload, payload.Length).ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            return;
+                        }
+                        catch
+                        {
+                            // Ignore send failures for individual batches.
+                        }
+                        finally
+                        {
+                            batch.Clear();
+                            sw.Restart();
+                        }
+
+                        // After flush, continue to pull any queued items immediately
+                        continue;
+                    }
+
+                    // No flush yet. Wait for either new data or the remaining time until the next flush.
+                    if (batch.Count == 0)
+                    {
+                        // If we have no queued items, we only need to wait for new data
+                        try
+                        {
+                            // Wait until data is available or cancellation requested
+                            await reader.WaitToReadAsync(_cts.Token).AsTask().ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        // We have items but haven't reached the flush interval yet.
+                        var remaining = _batchFlushInterval - elapsed;
+                        if (remaining < TimeSpan.Zero)
+                        {
+                            remaining = TimeSpan.Zero;
+                        }
+
+                        try
+                        {
+                            var waitTask = reader.WaitToReadAsync(_cts.Token).AsTask();
+                            var delayTask = Task.Delay(remaining, _cts.Token);
+                            await Task.WhenAny(waitTask, delayTask).ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            break;
+                        }
+                    }
                 }
-
-                var shouldFlush = batch.Count > 0 && (batch.Count >= _maxBatchSize || sw.Elapsed >= _batchFlushInterval);
-
-                if (shouldFlush)
+                catch (OperationCanceledException)
                 {
-                    try
-                    {
-                        var payload = MonitoringEnvelopeSerializer.SerializeBatch(batch, _encoding);
-                        await _udpClient.SendAsync(payload, payload.Length).ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        return;
-                    }
-                    catch
-                    {
-                        // Ignore send failures for individual batches.
-                    }
-                    finally
-                    {
-                        batch.Clear();
-                        sw.Restart();
-                    }
+                    break;
                 }
-
-                // If no data, wait for either incoming data or timeout for time-based flush
-                if (batch.Count == 0)
+                catch
                 {
-                    var waitTask = reader.WaitToReadAsync(_cts.Token).AsTask();
-                    var delayTask = Task.Delay(_batchFlushInterval, _cts.Token);
-                    await Task.WhenAny(waitTask, delayTask).ConfigureAwait(false);
+                    // Swallow unexpected exceptions to keep the background loop alive.
+                    // Next iteration will continue processing.
                 }
             }
         }

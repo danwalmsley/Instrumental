@@ -176,12 +176,15 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
         var name = instrumentName.ToLowerInvariant();
         return name switch
         {
-            "avalonia.comp.render.time" => "Compositor Render",
-            "avalonia.comp.update.time" => "Compositor Update",
-            "avalonia.ui.measure.time" => "UI Measure",
-            "avalonia.ui.arrange.time" => "UI Arrange",
-            "avalonia.ui.render.time" => "UI Render",
-            "avalonia.ui.input.time" => "UI Input",
+            // Compositor: group render and update on the same track
+            "avalonia.comp.render.time" => "Compositor",
+            "avalonia.comp.update.time" => "Compositor",
+
+            // UI metrics grouped on single UI Thread track
+            "avalonia.ui.measure.time" => "UI Thread",
+            "avalonia.ui.arrange.time" => "UI Thread",
+            "avalonia.ui.render.time" => "UI Thread",
+            "avalonia.ui.input.time" => "UI Thread",
             _ => null
         };
     }
@@ -189,12 +192,15 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
     private static string? ResolveFallbackTrack(string instrumentName)
     {
         var name = instrumentName.ToLowerInvariant();
-        if (name.Contains(".measure.")) return "UI Measure";
-        if (name.Contains(".arrange.")) return "UI Arrange";
-        if (name.Contains(".render.")) return "UI Render";
-        if (name.Contains(".input.")) return "UI Input";
-        if (name.Contains("comp.render")) return "Compositor Render";
-        if (name.Contains("comp.update")) return "Compositor Update";
+        // Compositor variants
+        if (name.Contains("comp.render") || name.Contains("compositor.render")) return "Compositor";
+        if (name.Contains("comp.update") || name.Contains("compositor.update")) return "Compositor";
+
+        // UI variants mapped to UI Thread
+        if (name.Contains(".measure.")) return "UI Thread";
+        if (name.Contains(".arrange.")) return "UI Thread";
+        if (name.Contains(".render.")) return "UI Thread";
+        if (name.Contains(".input.")) return "UI Thread";
         return null;
     }
 
