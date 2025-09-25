@@ -2,16 +2,15 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Net;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Input;
-using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
-using InstruMental.Services;
+using InstruMental.Diagnostics.Services;
 using ReactiveUI;
 using System.Reactive.Linq;
 using InstruMental.Contracts.Monitoring;
+using InstruMental.Contracts.Serialization;
 
 namespace InstruMental.ViewModels;
 
@@ -19,7 +18,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
 {
     private bool _disposed;
     private readonly List<IDisposable> _commandsToDispose = new();
-    private readonly InstruMentalActivityListener? _metricListener;
+    private readonly UdpMetricsListener? _metricListener;
 
     public MainWindowViewModel()
     {
@@ -40,13 +39,7 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
         }
         else
         {
-            // Listen to InstruMental activity stream (default localhost:5005)
-            var opts = new InstruMentalActivityListenerOptions
-            {
-                ListenAddress = IPAddress.Loopback,
-                Port = 5005
-            };
-            var listener = new InstruMentalActivityListener(opts);
+            var listener = new UdpMetricsListener(5005, EnvelopeEncoding.Binary, IPAddress.Loopback, null);
             listener.ActivityReceived += OnActivityReceived;
             listener.MetricReceived += OnMetricReceived;
             listener.Start();

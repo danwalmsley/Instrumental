@@ -5,6 +5,9 @@ using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading.Channels;
+using System.Collections.Generic;
+using System.Threading;
+using System.Formats.Cbor;
 using InstruMental.Contracts.Monitoring;
 using InstruMental.Contracts.Serialization;
 
@@ -23,6 +26,9 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
     private readonly UdpClient _udpClient;
     private readonly TimeSpan _observableInterval;
     private readonly EnvelopeEncoding _encoding;
+    private readonly TimeSpan _batchFlushInterval;
+    private readonly int _maxBatchSize;
+    private readonly int _maxDatagramSize;
 
     public AvaloniaMetricsPublisher(InstruMentalMonitoringOptions options)
     {
@@ -36,6 +42,9 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
 
         _observableInterval = options.ObservableInterval;
         _encoding = options.Encoding;
+        _batchFlushInterval = options.BatchFlushInterval;
+        _maxBatchSize = Math.Max(1, options.MaxBatchSize);
+        _maxDatagramSize = Math.Max(1, options.MaxDatagramSize);
         _channel = Channel.CreateBounded<MonitoringEnvelope>(new BoundedChannelOptions(ChannelCapacity)
         {
             SingleReader = true,
@@ -237,23 +246,178 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
         try
         {
             var reader = _channel.Reader;
+            var batch = new List<MonitoringEnvelope>(_maxBatchSize);
+
             while (await reader.WaitToReadAsync(_cts.Token).ConfigureAwait(false))
             {
+                // Pull any immediately-available items into the batch
                 while (reader.TryRead(out var sample))
+                {
+                    batch.Add(sample);
+                    if (batch.Count >= _maxBatchSize)
+                    {
+                        break;
+                    }
+                }
+
+                if (batch.Count == 0)
+                {
+                    continue;
+                }
+
+                // If batch is not yet full, wait a short interval to allow more items to accumulate
+                if (batch.Count < _maxBatchSize)
                 {
                     try
                     {
-                        var payload = MonitoringEnvelopeSerializer.Serialize(sample, _encoding);
-                        await _udpClient.SendAsync(payload, payload.Length).ConfigureAwait(false);
+                        await Task.Delay(_batchFlushInterval, _cts.Token).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException)
                     {
-                        return;
+                        // shutting down
                     }
-                    catch
+
+                    // Drain any newly-arrived items up to the max batch size
+                    while (batch.Count < _maxBatchSize && reader.TryRead(out var more))
                     {
-                        // Ignore individual send failures, continue streaming metrics.
+                        batch.Add(more);
                     }
+                }
+
+                // Send the batch, packing pre-serialized envelopes into MTU-safe datagrams
+                try
+                {
+                    // Pre-serialize each envelope exactly once
+                    var serialized = new List<byte[]>(batch.Count);
+                    serialized.Clear();
+                    foreach (var env in batch)
+                    {
+                        try
+                        {
+                            serialized.Add(MonitoringEnvelopeSerializer.Serialize(env, _encoding));
+                        }
+                        catch
+                        {
+                            // Serialization failure for a single envelope: skip it
+                        }
+                    }
+
+                    // Helper to get CBOR array header bytes for a given count
+                    static byte[] GetCborArrayHeader(int count)
+                    {
+                        var w = new CborWriter();
+                        w.WriteStartArray(count);
+                        return w.Encode();
+                    }
+
+                    int idx = 0;
+                    while (idx < serialized.Count)
+                    {
+                        // Build a datagram by greedily adding serialized items until adding next would exceed _maxDatagramSize
+                        int start = idx;
+                        long sumLen = 0;
+                        int countInPacket = 0;
+
+                        while (idx < serialized.Count)
+                        {
+                            var nextLen = serialized[idx].Length;
+                            long projectedSize;
+
+                            if (_encoding == EnvelopeEncoding.Json)
+                            {
+                                // JSON array: '[' + items joined by ',' + ']' => total = sumLen + nextLen + (countInPacket == 0 ? 2 : (countInPacket + 1))
+                                // General formula: sumLen + nextLen + (countNew - 1) /*commas*/ + 2 /*brackets*/
+                                // Here countNew = countInPacket + 1
+                                projectedSize = sumLen + nextLen + (countInPacket) /*commas after adding this*/ + 2;
+                            }
+                            else
+                            {
+                                // CBOR array: header(len=countNew) + sumLen + nextLen
+                                var header = GetCborArrayHeader(countInPacket + 1);
+                                projectedSize = header.Length + sumLen + nextLen;
+                            }
+
+                            if (projectedSize <= _maxDatagramSize)
+                            {
+                                sumLen += nextLen;
+                                countInPacket++;
+                                idx++;
+                                continue;
+                            }
+
+                            // If no items yet added and single item is too large, include it anyway (send oversized single envelope)
+                            if (countInPacket == 0)
+                            {
+                                // We'll force a single-envelope packet
+                                countInPacket = 1;
+                                sumLen = nextLen;
+                                idx++;
+                            }
+
+                            break;
+                        }
+
+                        // Build the datagram payload from serialized[start .. start+countInPacket-1]
+                        if (countInPacket == 0)
+                        {
+                            // nothing to send (should not happen) - break to avoid infinite loop
+                            break;
+                        }
+
+                        if (_encoding == EnvelopeEncoding.Json)
+                        {
+                            // Compute total size and allocate buffer
+                            // total = sumLen + (countInPacket - 1) /*commas*/ + 2 /*brackets*/
+                            var total = (int)(sumLen + (countInPacket - 1) + 2);
+                            var payload = new byte[total];
+                            int pos = 0;
+                            payload[pos++] = (byte)'[';
+                            for (int i = 0; i < countInPacket; i++)
+                            {
+                                var chunk = serialized[start + i];
+                                Buffer.BlockCopy(chunk, 0, payload, pos, chunk.Length);
+                                pos += chunk.Length;
+                                if (i < countInPacket - 1)
+                                {
+                                    payload[pos++] = (byte)',';
+                                }
+                            }
+                            payload[pos++] = (byte)']';
+
+                            // Send
+                            await _udpClient.SendAsync(payload, payload.Length).ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            // CBOR: header + concatenated items
+                            var header = GetCborArrayHeader(countInPacket);
+                            var total = header.Length + (int)sumLen;
+                            var payload = new byte[total];
+                            int pos = 0;
+                            Buffer.BlockCopy(header, 0, payload, pos, header.Length);
+                            pos += header.Length;
+                            for (int i = 0; i < countInPacket; i++)
+                            {
+                                var chunk = serialized[start + i];
+                                Buffer.BlockCopy(chunk, 0, payload, pos, chunk.Length);
+                                pos += chunk.Length;
+                            }
+
+                            await _udpClient.SendAsync(payload, payload.Length).ConfigureAwait(false);
+                        }
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                catch
+                {
+                    // Ignore send failures and continue
+                }
+                finally
+                {
+                    batch.Clear();
                 }
             }
         }
@@ -328,4 +492,5 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
 
     private static ActivitySamplingResult SampleAllDataUsingParentId(ref ActivityCreationOptions<string> _)
         => ActivitySamplingResult.AllData;
+
 }

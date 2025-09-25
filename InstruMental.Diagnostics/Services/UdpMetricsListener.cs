@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
@@ -137,6 +138,81 @@ public sealed class UdpMetricsListener : IAsyncDisposable
 
         try
         {
+            // First attempt: try to parse as a batch (preferred encoding if configured, then auto-detect)
+            var parsedBatch = false;
+            if (_preferredEncoding.HasValue)
+            {
+                if (MonitoringEnvelopeSerializer.TryDeserializeBatch(payload, _preferredEncoding.Value, out var batch))
+                {
+                    parsedBatch = true;
+                    if (EnablePayloadTraceLogging)
+                    {
+                        _logger?.LogTrace("Received batched payload ({Count} envelopes)", batch.Count);
+                    }
+                    foreach (var env in batch)
+                    {
+                        if (string.Equals(env.Type, EnvelopeTypes.Metric, StringComparison.OrdinalIgnoreCase) && env.Metric is not null)
+                        {
+                            DispatchMetric(env.Metric);
+                            continue;
+                        }
+
+                        if (string.Equals(env.Type, EnvelopeTypes.Activity, StringComparison.OrdinalIgnoreCase) && env.Activity is not null)
+                        {
+                            DispatchActivity(env.Activity);
+                            continue;
+                        }
+
+                        if (env.Metric is not null && string.IsNullOrEmpty(env.Type))
+                        {
+                            DispatchMetric(env.Metric);
+                            continue;
+                        }
+
+                        _logger?.LogWarning("Received envelope with unknown type in batch '{Type}'", env.Type);
+                    }
+
+                    return;
+                }
+            }
+
+            if (!parsedBatch)
+            {
+                if (MonitoringEnvelopeSerializer.TryDeserializeBatch(payload, out var batchAuto))
+                {
+                    if (EnablePayloadTraceLogging)
+                    {
+                        _logger?.LogTrace("Received batched payload (auto-detect) ({Count} envelopes)", batchAuto.Count);
+                    }
+
+                    foreach (var env in batchAuto)
+                    {
+                        if (string.Equals(env.Type, EnvelopeTypes.Metric, StringComparison.OrdinalIgnoreCase) && env.Metric is not null)
+                        {
+                            DispatchMetric(env.Metric);
+                            continue;
+                        }
+
+                        if (string.Equals(env.Type, EnvelopeTypes.Activity, StringComparison.OrdinalIgnoreCase) && env.Activity is not null)
+                        {
+                            DispatchActivity(env.Activity);
+                            continue;
+                        }
+
+                        if (env.Metric is not null && string.IsNullOrEmpty(env.Type))
+                        {
+                            DispatchMetric(env.Metric);
+                            continue;
+                        }
+
+                        _logger?.LogWarning("Received envelope with unknown type in batch '{Type}'", env.Type);
+                    }
+
+                    return;
+                }
+            }
+
+            // Fall back to previous single-envelope handling
             var parsed = false;
             MonitoringEnvelope? envelope = null;
 

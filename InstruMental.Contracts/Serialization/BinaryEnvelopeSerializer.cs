@@ -12,6 +12,19 @@ public static class BinaryEnvelopeSerializer
         return writer.Encode();
     }
 
+    // New: serialize a batch of envelopes as a CBOR array
+    public static byte[] SerializeBatch(IReadOnlyList<MonitoringEnvelope> envelopes)
+    {
+        var writer = new CborWriter();
+        writer.WriteStartArray(envelopes.Count);
+        foreach (var env in envelopes)
+        {
+            WriteEnvelope(writer, env);
+        }
+        writer.WriteEndArray();
+        return writer.Encode();
+    }
+
     public static bool TryDeserialize(ReadOnlyMemory<byte> payload, out MonitoringEnvelope? envelope)
     {
         try

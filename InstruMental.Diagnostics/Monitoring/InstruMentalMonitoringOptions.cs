@@ -11,10 +11,14 @@ public sealed class InstruMentalMonitoringOptions
 
     public TimeSpan ObservableInterval { get; init; } = TimeSpan.FromMilliseconds(500);
 
-    public EnvelopeEncoding Encoding { get; init; } = EnvelopeEncoding.Json;
+    public EnvelopeEncoding Encoding { get; init; } = EnvelopeEncoding.Binary;
 
     // New: batching controls
-    public TimeSpan BatchFlushInterval { get; init; } = TimeSpan.FromMilliseconds(100);
+    public TimeSpan BatchFlushInterval { get; init; } = TimeSpan.FromMilliseconds(20);
 
     public int MaxBatchSize { get; init; } = 100;
+
+    // New: approximate maximum datagram payload size (in bytes) to avoid UDP fragmentation.
+    // Default 1200 is conservative for typical MTUs; adjust for your network (e.g., 1400 or 1500-MTU minus IP/UDP headers).
+    public int MaxDatagramSize { get; init; } = 1200;
 }

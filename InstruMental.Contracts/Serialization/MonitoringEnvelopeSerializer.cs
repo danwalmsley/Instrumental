@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using InstruMental.Contracts.Monitoring;
 
 namespace InstruMental.Contracts.Serialization;
@@ -10,6 +11,15 @@ public static class MonitoringEnvelopeSerializer
         {
             EnvelopeEncoding.Json => JsonEnvelopeSerializer.Serialize(envelope),
             EnvelopeEncoding.Binary => BinaryEnvelopeSerializer.Serialize(envelope),
+            _ => throw new ArgumentOutOfRangeException(nameof(encoding), encoding, null)
+        };
+
+    // New: serialize a batch of envelopes using the requested encoding
+    public static byte[] SerializeBatch(IReadOnlyList<MonitoringEnvelope> envelopes, EnvelopeEncoding encoding)
+        => encoding switch
+        {
+            EnvelopeEncoding.Json => JsonEnvelopeSerializer.SerializeBatch(envelopes),
+            EnvelopeEncoding.Binary => BinaryEnvelopeSerializer.SerializeBatch(envelopes),
             _ => throw new ArgumentOutOfRangeException(nameof(encoding), encoding, null)
         };
 
