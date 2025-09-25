@@ -744,50 +744,40 @@ public class TimelineViewModel : ObservableObject, IDisposable
             throw new ArgumentOutOfRangeException(nameof(scale));
         }
 
+        // Compute new duration and clamp to allowed range
         var targetTicks = Math.Max(1L, (long)Math.Round(VisibleDuration.Ticks * scale, MidpointRounding.AwayFromZero));
         var newDuration = TimeSpan.FromTicks(targetTicks);
         newDuration = ClampVisibleDuration(newDuration);
 
-        var restoreLive = newDuration >= _defaultVisibleDuration;
-
+        // Apply zoom (this changes the "divs per second") and always show latest data
         VisibleDuration = newDuration;
-
-        if (restoreLive)
-        {
-            if (TriggerEnabled && ActiveTriggerTime is { } t)
-            {
-                AnchorToTrigger(t);
-                return;
-            }
-            GoLive();
-            return;
-        }
-
-        if (TriggerEnabled && ActiveTriggerTime is { } last)
-        {
-            AnchorToTrigger(last);
-            return;
-        }
-
-        IsLive = false;
-
-        var bounds = GetTimelineBoundsCore();
-        var windowStart = ViewportEnd - VisibleDuration;
-        var clamped = ClampWindowToBounds(windowStart, ViewportEnd, bounds);
-        ViewportEnd = clamped.End;
+        GoLive();
     }
 
     public void ResetZoom()
     {
+        // Reset to the default visible duration and show latest data
         VisibleDuration = _defaultVisibleDuration;
-        if (TriggerEnabled && ActiveTriggerTime is { } t)
+        GoLive();
+    }
+
+    public void ZoomAround(DateTimeOffset anchor, double scale, double offsetWithinWindow = 0.5)
+    {
+        if (scale <= 0)
         {
-            AnchorToTrigger(t);
+            throw new ArgumentOutOfRangeException(nameof(scale));
         }
-        else
-        {
-            GoLive();
-        }
+
+        // Re-implement zoom to only change the visible duration (divs/sec) and remain live.
+        // Ignore the anchor/offset arguments for zooming; panning still behaves as before.
+        var oldDuration = VisibleDuration;
+        var newDurationTicks = (long)Math.Round(oldDuration.Ticks * scale, MidpointRounding.AwayFromZero);
+        newDurationTicks = Math.Max(1L, newDurationTicks);
+        var newDuration = TimeSpan.FromTicks(newDurationTicks);
+        newDuration = ClampVisibleDuration(newDuration);
+
+        VisibleDuration = newDuration;
+        GoLive();
     }
 
     public void PanViewport(double ratio)
@@ -827,49 +817,6 @@ public class TimelineViewModel : ObservableObject, IDisposable
         candidate = Clamp(candidate, minEnd, maxEnd);
         ViewportEnd = candidate;
         // When panning manually in trigger mode, keep the trigger line fixed (no special handling needed).
-    }
-
-    public void ZoomAround(DateTimeOffset anchor, double scale, double offsetWithinWindow = 0.5)
-    {
-        if (scale <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(scale));
-        }
-
-        var oldDuration = VisibleDuration;
-        var newDurationTicks = (long)Math.Round(oldDuration.Ticks * scale, MidpointRounding.AwayFromZero);
-        newDurationTicks = Math.Max(1L, newDurationTicks);
-        var newDuration = TimeSpan.FromTicks(newDurationTicks);
-        newDuration = ClampVisibleDuration(newDuration);
-
-        var restoreLive = newDuration >= _defaultVisibleDuration;
-
-        var bounds = GetTimelineBoundsCore();
-        anchor = Clamp(anchor, bounds.Start, bounds.End);
-        offsetWithinWindow = double.IsNaN(offsetWithinWindow) ? 0.5 : Math.Clamp(offsetWithinWindow, 0, 1);
-
-        VisibleDuration = newDuration;
-
-        if (restoreLive && !TriggerEnabled)
-        {
-            GoLive();
-            return;
-        }
-
-        // Keep trigger anchored if armed and we have an active trigger time; do not update to a newer one during zoom
-        if (TriggerEnabled && ActiveTriggerTime is { } t)
-        {
-            AnchorToTrigger(t);
-            return;
-        }
-
-        IsLive = false;
-
-        var newStart = anchor - TimeSpan.FromMilliseconds(newDuration.TotalMilliseconds * offsetWithinWindow);
-        var newEnd = newStart + newDuration;
-
-        var clamped = ClampWindowToBounds(newStart, newEnd, bounds);
-        ViewportEnd = clamped.End;
     }
 
     public (DateTimeOffset Start, DateTimeOffset End) GetTimelineBounds()
