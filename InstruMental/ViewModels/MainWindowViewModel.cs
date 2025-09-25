@@ -194,17 +194,17 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
     // and intentionally chosen to be visually distinctive when cycled through.
     private static readonly Color[] s_colorPalette = new[]
     {
+        Color.FromArgb(255, 156, 39, 176),  // #9C27B0 - Purple 500
         Color.FromArgb(255, 244, 67, 54),   // #F44336 - Red 500
-        Color.FromArgb(255, 255, 87, 34),   // #FF5722 - Deep Orange 500
+        Color.FromArgb(255, 63, 81, 181),   // #3F51B5 - Indigo 500
         Color.FromArgb(255, 255, 193, 7),   // #FFC107 - Amber 500
-        Color.FromArgb(255, 255, 235, 59),  // #FFEB3B - Yellow 500
         Color.FromArgb(255, 139, 195, 74),  // #8BC34A - Light Green 500
+        Color.FromArgb(255, 255, 87, 34),   // #FF5722 - Deep Orange 500
         Color.FromArgb(255, 76, 175, 80),   // #4CAF50 - Green 500
         Color.FromArgb(255, 0, 188, 212),   // #00BCD4 - Cyan 500
+        Color.FromArgb(255, 255, 235, 59),  // #FFEB3B - Yellow 500
         Color.FromArgb(255, 3, 169, 244),   // #03A9F4 - Light Blue 500
         Color.FromArgb(255, 33, 150, 243),  // #2196F3 - Blue 500
-        Color.FromArgb(255, 63, 81, 181),   // #3F51B5 - Indigo 500
-        Color.FromArgb(255, 156, 39, 176),  // #9C27B0 - Purple 500
         Color.FromArgb(255, 233, 30, 99),   // #E91E63 - Pink 500
         Color.FromArgb(255, 255, 152, 0),   // #FF9800 - Orange 500
         Color.FromArgb(255, 121, 85, 72),   // #795548 - Brown 500
@@ -216,7 +216,20 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
     // lifetime of the app instance.
     private static readonly Dictionary<string, Color> s_nameToColor = new();
     private static int _sNextPaletteIndex;
+    private static int _sPrevPaletteIndex = -1; // index of the palette color last assigned
     private static readonly object s_colorLock = new();
+
+    // Threshold on squared RGB distance below which two colors are considered "similar" for our purposes.
+    // Tuned empirically for this palette (values 0-255 per channel -> squared distances up to ~195075).
+    private const int s_similarityThreshold = 1500;
+
+    private static int ColorDistanceSquared(Color a, Color b)
+    {
+        var dr = (int)a.R - (int)b.R;
+        var dg = (int)a.G - (int)b.G;
+        var db = (int)a.B - (int)b.B;
+        return dr * dr + dg * dg + db * db;
+    }
 
     private static Color ColorFromName(string name)
     {
@@ -235,10 +248,44 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
                 return existing;
             }
 
-            // Assign next color in the palette and advance the index (wrap around)
-            var color = s_colorPalette[_sNextPaletteIndex % s_colorPalette.Length];
+            // Choose next color trying to avoid colors that are "similar" to the last assigned color.
+            var paletteLength = s_colorPalette.Length;
+            var chosenIndex = _sNextPaletteIndex % paletteLength;
+
+            if (_sPrevPaletteIndex >= 0)
+            {
+                // Try to find a palette entry (within one full rotation) that's not similar to the previous
+                // assigned color. Start search at _sNextPaletteIndex and stop when we find a sufficiently
+                // different color or after checking the whole palette.
+                var prevColor = s_colorPalette[_sPrevPaletteIndex];
+                var found = false;
+                for (var i = 0; i < paletteLength; i++)
+                {
+                    var idx = (_sNextPaletteIndex + i) % paletteLength;
+                    var candidate = s_colorPalette[idx];
+                    var dist = ColorDistanceSquared(candidate, prevColor);
+                    if (dist >= s_similarityThreshold)
+                    {
+                        chosenIndex = idx;
+                        found = true;
+                        break;
+                    }
+                }
+
+                // If we didn't find a sufficiently different color (very unlikely), fall back to the next in sequence.
+                if (!found)
+                {
+                    chosenIndex = _sNextPaletteIndex % paletteLength;
+                }
+            }
+
+            var color = s_colorPalette[chosenIndex];
             s_nameToColor[key] = color;
-            _sNextPaletteIndex = (_sNextPaletteIndex + 1) % s_colorPalette.Length;
+
+            // Advance next index to one past the chosen entry and record this as the previous.
+            _sNextPaletteIndex = (chosenIndex + 1) % paletteLength;
+            _sPrevPaletteIndex = chosenIndex;
+
             return color;
         }
     }
