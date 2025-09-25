@@ -14,7 +14,7 @@ public sealed class InstruMentalMonitoringOptions
     public EnvelopeEncoding Encoding { get; init; } = EnvelopeEncoding.Binary;
 
     // New: batching controls
-    public TimeSpan BatchFlushInterval { get; init; } = TimeSpan.FromMilliseconds(20);
+    public TimeSpan BatchFlushInterval { get; init; } = TimeSpan.FromMilliseconds(50);
 
     public int MaxBatchSize { get; init; } = 100;
 

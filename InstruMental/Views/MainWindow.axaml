@@ -74,6 +74,9 @@
                          Watermark="e.g. 100 µs"
                          ToolTip.Tip="Holdoff duration (typed) or use slider; units: ns, µs/us, ms, s"
                          Text="{Binding Timeline.TriggerHoldoffText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                <ComboBox Width="140"
+                          ItemsSource="{Binding Timeline.HoldoffModes}"
+                          SelectedItem="{Binding Timeline.TriggerHoldoffMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
             </StackPanel>
             <TextBlock Text="Last:" VerticalAlignment="Center"/>
             <TextBlock Text="{Binding Timeline.LastTriggerTime}" VerticalAlignment="Center"/>

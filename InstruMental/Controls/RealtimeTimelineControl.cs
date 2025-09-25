@@ -11,6 +11,8 @@ using Avalonia.Media;
 using Avalonia.Media.Immutable;
 using InstruMental.Models;
 using InstruMental.ViewModels;
+using Avalonia.Threading;
+using System.Threading;
 
 namespace InstruMental.Controls;
 
@@ -95,7 +97,7 @@ public class RealtimeTimelineControl : Control
             {
                 DetachTrackHandlers(oldValue);
                 AttachTrackHandlers(value);
-                InvalidateVisual();
+                QueueInvalidateVisual();
             }
         }
     }
@@ -152,7 +154,7 @@ public class RealtimeTimelineControl : Control
             nameof(TimelineViewModel.ViewportEnd) or
             nameof(TimelineViewModel.TriggerMeasurePosition))
         {
-            InvalidateVisual();
+            QueueInvalidateVisual();
         }
     }
 
@@ -167,7 +169,7 @@ public class RealtimeTimelineControl : Control
             {
                 DetachTimelineHandlers(oldVm);
                 AttachTimelineHandlers(newVm);
-                InvalidateVisual();
+                QueueInvalidateVisual();
             }
         }
     }
@@ -236,14 +238,18 @@ public class RealtimeTimelineControl : Control
             }
         }
 
-        InvalidateVisual();
+        QueueInvalidateVisual();
     }
 
     private void AttachTrack(TimelineTrack track)
     {
         if (_trackHandlers.ContainsKey(track))
         {
-            return;
+            // If the Events collection has changed, re-attach handler
+            if (_trackHandlers[track] != null && track.Events is INotifyCollectionChanged notifyOld)
+            {
+                notifyOld.CollectionChanged -= _trackHandlers[track];
+            }
         }
 
         void Handler(object? _, NotifyCollectionChangedEventArgs args)
@@ -255,7 +261,6 @@ public class RealtimeTimelineControl : Control
                     DetachEvent(evt);
                 }
             }
-
             if (args.NewItems is not null)
             {
                 foreach (var evt in args.NewItems.OfType<TimelineEvent>())
@@ -263,10 +268,10 @@ public class RealtimeTimelineControl : Control
                     AttachEvent(evt);
                 }
             }
-
-            InvalidateVisual();
+            QueueInvalidateVisual();
         }
 
+        // Always attach handler to the current Events collection
         if (track.Events is INotifyCollectionChanged notify)
         {
             notify.CollectionChanged += Handler;
@@ -281,6 +286,13 @@ public class RealtimeTimelineControl : Control
         {
             AttachEvent(evt);
         }
+
+        // Listen for Events property changes if TimelineTrack supports it
+        if (track is System.ComponentModel.INotifyPropertyChanged npc)
+        {
+            npc.PropertyChanged -= TrackOnPropertyChanged;
+            npc.PropertyChanged += TrackOnPropertyChanged;
+        }
     }
 
     private void DetachTrack(TimelineTrack track)
@@ -289,23 +301,63 @@ public class RealtimeTimelineControl : Control
         {
             return;
         }
-
         if (handler is not null && track.Events is INotifyCollectionChanged notify)
         {
             notify.CollectionChanged -= handler;
         }
-
         foreach (var evt in track.Events)
         {
             DetachEvent(evt);
         }
-
+        if (track is System.ComponentModel.INotifyPropertyChanged npc)
+        {
+            npc.PropertyChanged -= TrackOnPropertyChanged;
+        }
         _trackHandlers.Remove(track);
+    }
+
+    private void TrackOnPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (sender is TimelineTrack track && e.PropertyName == nameof(TimelineTrack.Events))
+        {
+            // Detach old handler and attach new one
+            DetachTrack(track);
+            AttachTrack(track);
+            QueueInvalidateVisual();
+        }
     }
 
     private void EventOnPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        InvalidateVisual();
+        QueueInvalidateVisual();
+    }
+
+    // Ensures InvalidateVisual runs on the UI thread. Some event sources add
+    // events from background threads; posting to the UI thread ensures safe
+    // redraws and keeps the timeline responsive while avoiding cross-thread
+    // exceptions.
+    private int _invalidatePending;
+    private void QueueInvalidateVisual()
+    {
+        // If we're already on the UI thread just invalidate immediately.
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            InvalidateVisual();
+            return;
+        }
+
+        // Coalesce multiple background requests into a single posted action.
+        if (Interlocked.Exchange(ref _invalidatePending, 1) == 1)
+        {
+            return; // already queued
+        }
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            // Clear pending flag and invalidate.
+            Interlocked.Exchange(ref _invalidatePending, 0);
+            InvalidateVisual();
+        }, DispatcherPriority.Normal);
     }
 
     public override void Render(DrawingContext context)
@@ -517,21 +569,24 @@ public class RealtimeTimelineControl : Control
 
         // Apply level-of-detail filtering based on zoom level and event count
         var eventsToRender = GetEventsForLevelOfDetail(track.Events, windowStart, windowEnd, width);
-        var ordered = eventsToRender.OrderBy(e => e.Start).ToList();
-        for (int i = 0; i < ordered.Count; i++)
+        TimelineEvent? prev = null;
+        TimelineEvent? next = null;
+        var eventsList = eventsToRender as IList<TimelineEvent> ?? eventsToRender.ToList();
+        int count = eventsList.Count;
+        for (int i = 0; i < count; i++)
         {
-            var evt = ordered[i];
+            var evt = eventsList[i];
             double? prevRight = null;
             if (i > 0)
             {
-                var prev = ordered[i - 1];
+                prev = eventsList[i - 1];
                 var prevEnd = prev.End ?? windowEnd;
                 prevRight = TimeToX(prevEnd, windowStart, windowEnd, width);
             }
             double? nextLeft = null;
-            if (i < ordered.Count - 1)
+            if (i < count - 1)
             {
-                var next = ordered[i + 1];
+                next = eventsList[i + 1];
                 nextLeft = TimeToX(next.Start, windowStart, windowEnd, width);
             }
             DrawEvent(context, evt, windowStart, windowEnd, width, trackBounds, labelArea, depth: 0, prevEventRight: prevRight, nextEventLeft: nextLeft);
@@ -1243,7 +1298,7 @@ public class RealtimeTimelineControl : Control
                     }
                 }
 
-                InvalidateVisual();
+                QueueInvalidateVisual();
             }
 
             timelineEvent.Children.CollectionChanged += Handler;

@@ -17,7 +17,7 @@ public class TimelineViewModel : ObservableObject, IDisposable
     private readonly Dictionary<Guid, Guid?> _eventParentById = new();
     private readonly Dictionary<Guid, string> _eventTrackById = new();
     private readonly Dictionary<string, TimelineTrack> _tracksByName = new(StringComparer.OrdinalIgnoreCase);
-    private const double HistoryRetentionMultiplier = 4;
+    private const double HistoryRetentionMultiplier = 100;
     // Number of major divisions across the visible width (matches RealtimeTimelineControl)
     public const int OscilloscopeMajorDivisions = 10;
     public static readonly TimeSpan MinimumVisibleDuration = TimeSpan.FromTicks(10);
@@ -33,6 +33,11 @@ public class TimelineViewModel : ObservableObject, IDisposable
     private bool _isLive = true;
     private DateTimeOffset? _captureStartTime;
     private DateTimeOffset? _captureEndTime;
+
+    // New: backing collection for available event labels and counts for incremental updates
+    private readonly ObservableCollection<string> _availableEventLabels = new();
+    // Keep counts so we can remove labels only when no events remain with that label
+    private readonly Dictionary<string, int> _availableLabelCounts = new(StringComparer.Ordinal);
 
     public TimelineViewModel()
     {
@@ -122,17 +127,30 @@ public class TimelineViewModel : ObservableObject, IDisposable
         Both
     }
 
+    public enum HoldoffMode
+    {
+        Inhibit,    // Inhibit retriggers and re-arm to latest during holdoff (existing behaviour)
+        PreShift    // Anchor the view to (triggerTime - TriggerHoldoff) when a trigger fires
+    }
+
     private bool _triggerEnabled;
     private string? _triggerTrackName;
     private string? _triggerEventLabel;
     private TriggerEdge _triggerEdge = TriggerEdge.Rising;
     private DateTimeOffset? _lastTriggerTime;
     private DateTimeOffset? _activeTriggerTime;
+    // When triggers occur during the holdoff window we record the most recent
+    // candidate here and apply it once the holdoff expires. This matches
+    // oscilloscope holdoff behavior where the scope waits the holdoff interval
+    // and then re-arms to the most recent trigger that happened in that period.
+    private DateTimeOffset? _pendingTriggerTime;
+    private DateTimeOffset _lastTrimTimestamp = DateTimeOffset.MinValue;
 
     private TimeSpan _triggerHoldoff = TimeSpan.Zero; // 0 disables holdoff
     private string _triggerHoldoffText = "0 ms";
     // Fractional slider for holdoff: 0 = 0, 1 = VisibleDuration
     private double _triggerHoldoffFraction;
+    private HoldoffMode _triggerHoldoffMode;
     public string TriggerHoldoffText
     {
         get => _triggerHoldoffText;
@@ -259,7 +277,8 @@ public class TimelineViewModel : ObservableObject, IDisposable
         {
             if (SetProperty(ref _triggerTrackName, value))
             {
-                OnPropertyChanged(nameof(AvailableEventLabels));
+                // Rebuild the available event labels for the newly selected track
+                RebuildAvailableEventLabelsForCurrentTrack();
                 OnPropertyChanged(nameof(IsTriggerArmed));
             }
         }
@@ -281,6 +300,13 @@ public class TimelineViewModel : ObservableObject, IDisposable
     {
         get => _triggerEdge;
         set => SetProperty(ref _triggerEdge, value);
+    }
+
+    // Expose the holdoff mode so the view can bind to it (e.g. ComboBox SelectedItem).
+    public HoldoffMode TriggerHoldoffMode
+    {
+        get => _triggerHoldoffMode;
+        set => SetProperty(ref _triggerHoldoffMode, value);
     }
 
     public bool IsTriggerArmed => TriggerEnabled && !string.IsNullOrWhiteSpace(TriggerTrackName) && !string.IsNullOrWhiteSpace(TriggerEventLabel);
@@ -380,21 +406,11 @@ public class TimelineViewModel : ObservableObject, IDisposable
 
     public IEnumerable<string> AvailableTrackNames => Tracks.Select(t => t.Name);
 
-    public IEnumerable<string> AvailableEventLabels
-    {
-        get
-        {
-            if (string.IsNullOrWhiteSpace(TriggerTrackName)) return Enumerable.Empty<string>();
-            if (!_tracksByName.TryGetValue(TriggerTrackName, out var track)) return Enumerable.Empty<string>();
-            return EnumerateEventTree(track.Events)
-                .Select(e => NormalizeLabel(e.Label))
-                .Where(s => !string.IsNullOrWhiteSpace(s))
-                .Distinct(StringComparer.Ordinal)
-                .OrderBy(s => s, StringComparer.Ordinal);
-        }
-    }
+    // Replace computed IEnumerable with ObservableCollection that is updated incrementally
+    public ObservableCollection<string> AvailableEventLabels => _availableEventLabels;
 
     public Array TriggerModes => Enum.GetValues(typeof(TriggerEdge));
+    public Array HoldoffModes => Enum.GetValues(typeof(HoldoffMode));
 
     private static IEnumerable<TimelineEvent> EnumerateEventTree(IEnumerable<TimelineEvent> events)
     {
@@ -444,10 +460,13 @@ public class TimelineViewModel : ObservableObject, IDisposable
             InsertEventOrdered(track.Events, timelineEvent);
         }
 
-        OnPropertyChanged(nameof(AvailableEventLabels));
+        // Incrementally add label to the available labels collection if this event belongs to the selected trigger track
+        TryAddLabelForIncomingEvent(trackName, label);
 
         // Trigger on rising edge (event start)
         OnTriggerCandidate(trackName, label, timestamp, rising: true);
+
+        TrimExpiredEvents();
     }
 
     public void ApplyEventStop(Guid eventId, DateTimeOffset timestamp)
@@ -455,13 +474,15 @@ public class TimelineViewModel : ObservableObject, IDisposable
         if (_eventsById.TryGetValue(eventId, out var timelineEvent))
         {
             timelineEvent.Complete(timestamp);
-            OnPropertyChanged(nameof(AvailableEventLabels));
             // Determine track and label from stored maps
             if (_eventTrackById.TryGetValue(eventId, out var trackName))
             {
+                // No new label added on stop; but keep trigger candidate check
                 OnTriggerCandidate(trackName, timelineEvent.Label, timestamp, rising: false);
             }
         }
+
+        TrimExpiredEvents();
     }
 
     public void ApplyCompleteEvent(Guid eventId, string trackName, DateTimeOffset startTimestamp, DateTimeOffset endTimestamp, string label, Color color, Guid? parentId = null)
@@ -488,11 +509,14 @@ public class TimelineViewModel : ObservableObject, IDisposable
             InsertEventOrdered(track.Events, timelineEvent);
         }
 
-        OnPropertyChanged(nameof(AvailableEventLabels));
+        // Incrementally add label for complete events (start edge is considered)
+        TryAddLabelForIncomingEvent(trackName, label);
 
         // Consider both edges for a complete event
         OnTriggerCandidate(trackName, label, startTimestamp, rising: true);
         OnTriggerCandidate(trackName, label, endTimestamp, rising: false);
+
+        TrimExpiredEvents();
     }
 
     private void OnTriggerCandidate(string trackName, string label, DateTimeOffset timestamp, bool rising)
@@ -523,15 +547,25 @@ public class TimelineViewModel : ObservableObject, IDisposable
         {
             if (timestamp < last + TriggerHoldoff)
             {
+                // Record the most recent trigger seen during the holdoff window
+                // and defer anchoring until the holdoff expires. This mirrors how
+                // many oscilloscopes behave: they wait the holdoff interval and
+                // then re-arm to the latest trigger that occurred during it.
+                if (_pendingTriggerTime is null || timestamp > _pendingTriggerTime.Value)
+                {
+                    _pendingTriggerTime = timestamp;
+                }
                 return; // still in holdoff window
             }
         }
 
-        // Always anchor to the trigger when it fires (subject to holdoff above).
-        // This matches oscilloscope behaviour where each trigger positions the
-        // window. AnchorToTrigger will allow the timeline to include a future
-        // region so the trigger can be positioned before time-zero.
-        AnchorToTrigger(timestamp);
+        // If we reach here, trigger is allowed (not inhibited by holdoff). Clear
+        // any pending candidate because we are taking this trigger now.
+        _pendingTriggerTime = null;
+        // In PreShift mode anchor to (timestamp - TriggerHoldoff), otherwise anchor to timestamp
+        var anchorNow = _triggerHoldoffMode == HoldoffMode.PreShift ? timestamp - TriggerHoldoff : timestamp;
+        AnchorToTrigger(anchorNow);
+        // Record actual trigger time for holdoff gating
         ActiveTriggerTime = timestamp;
         LastTriggerTime = timestamp;
     }
@@ -592,6 +626,15 @@ public class TimelineViewModel : ObservableObject, IDisposable
 
     private void RemoveEvent(TimelineEvent timelineEvent)
     {
+        // Before removing from maps/containers, update the available-label counts
+        if (_eventTrackById.TryGetValue(timelineEvent.Id, out var trackName))
+        {
+            if (!string.IsNullOrWhiteSpace(TriggerTrackName) && string.Equals(trackName, TriggerTrackName, StringComparison.OrdinalIgnoreCase))
+            {
+                RemoveAvailableLabel(timelineEvent.Label);
+            }
+        }
+
         RemoveEventFromContainers(timelineEvent);
         _eventsById.Remove(timelineEvent.Id);
         _eventParentById.Remove(timelineEvent.Id);
@@ -606,13 +649,21 @@ public class TimelineViewModel : ObservableObject, IDisposable
             return;
         }
 
-        var insertIndex = collection.Count;
-        for (var index = 0; index < collection.Count; index++)
+        // Binary search for insert index
+        int low = 0;
+        int high = collection.Count - 1;
+        int insertIndex = collection.Count;
+        while (low <= high)
         {
-            if (timelineEvent.Start < collection[index].Start)
+            int mid = low + (high - low) / 2;
+            if (timelineEvent.Start < collection[mid].Start)
             {
-                insertIndex = index;
-                break;
+                insertIndex = mid;
+                high = mid - 1;
+            }
+            else
+            {
+                low = mid + 1;
             }
         }
 
@@ -971,6 +1022,11 @@ public class TimelineViewModel : ObservableObject, IDisposable
         _eventsById.Clear();
         _eventParentById.Clear();
         _eventTrackById.Clear();
+
+        // Also clear the incremental label collections so the UI reflects the cleared state
+        _availableEventLabels.Clear();
+        _availableLabelCounts.Clear();
+        OnPropertyChanged(nameof(AvailableEventLabels));
     }
 
     private static TimeSpan ClampVisibleDuration(TimeSpan duration)
@@ -988,6 +1044,149 @@ public class TimelineViewModel : ObservableObject, IDisposable
         return duration;
     }
 
+    private void TrimExpiredEvents(bool force = false)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (!force && (now - _lastTrimTimestamp) < TimeSpan.FromMilliseconds(200))
+        {
+            return;
+        }
+
+        _lastTrimTimestamp = now;
+
+        // Time-based trimming: remove events that ended more than 1 minute ago.
+        // Use a fixed retention period of 1 minute rather than the previous retained duration.
+        var retention = TimeSpan.FromMinutes(1);
+        if (_eventsById.Count == 0)
+        {
+            return;
+        }
+
+        var cutoff = now - retention;
+        foreach (var track in Tracks)
+        {
+            TrimEventCollection(track.Events, cutoff);
+        }
+    }
+
+    private bool TrimEventCollection(IList<TimelineEvent> events, DateTimeOffset cutoff)
+    {
+        // Fast path: if empty, nothing to do
+        if (events.Count == 0) return false;
+
+        // Collections are ordered by Start ascending. Use binary search to find
+        // the first item whose Start is NOT < cutoff (i.e. Start >= cutoff).
+        // All items with index < firstNonExpired have Start < cutoff and can be removed.
+        int low = 0;
+        int high = events.Count; // exclusive
+        while (low < high)
+        {
+            int mid = low + ((high - low) >> 1);
+            if (events[mid].Start < cutoff)
+            {
+                low = mid + 1;
+            }
+            else
+            {
+                high = mid;
+            }
+        }
+
+        var removedAny = false;
+        var firstNonExpired = low;
+
+        if (firstNonExpired > 0)
+        {
+            // Capture the expired events snapshot then remove each via RemoveEvent
+            // which also handles child removal and bookkeeping.
+            var toRemove = events.Take(firstNonExpired).ToList();
+            foreach (var evt in toRemove)
+            {
+                RemoveEvent(evt);
+                removedAny = true;
+            }
+        }
+
+        // Recurse into children of the remaining events to trim nested events.
+        // Iterate backwards to match prior pattern (though children trimming doesn't modify this list).
+        for (var i = events.Count - 1; i >= 0; i--)
+        {
+            var evt = events[i];
+            if (evt.Children.Count > 0)
+            {
+                removedAny |= TrimEventCollection(evt.Children, cutoff);
+            }
+        }
+
+        return removedAny;
+    }
+
+    // Helper: rebuild available labels when TriggerTrackName changes
+    private void RebuildAvailableEventLabelsForCurrentTrack()
+    {
+        // Do not scan existing events - labels should be added only as new events come in.
+        _availableLabelCounts.Clear();
+        _availableEventLabels.Clear();
+        OnPropertyChanged(nameof(AvailableEventLabels));
+    }
+
+    // Helper: try to add a label when an event arrives
+    private void TryAddLabelForIncomingEvent(string trackName, string label)
+    {
+        if (string.IsNullOrWhiteSpace(TriggerTrackName)) return;
+        if (!string.Equals(trackName, TriggerTrackName, StringComparison.OrdinalIgnoreCase)) return;
+        var normalized = NormalizeLabel(label);
+        if (string.IsNullOrWhiteSpace(normalized)) return;
+
+        if (_availableLabelCounts.TryGetValue(normalized, out var cnt))
+        {
+            _availableLabelCounts[normalized] = cnt + 1;
+            return;
+        }
+
+        // Insert in sorted order (Ordinal)
+        var insertIndex = 0;
+        while (insertIndex < _availableEventLabels.Count && string.Compare(_availableEventLabels[insertIndex], normalized, StringComparison.Ordinal) < 0)
+        {
+            insertIndex++;
+        }
+        _availableLabelCounts[normalized] = 1;
+        _availableEventLabels.Insert(insertIndex, normalized);
+        OnPropertyChanged(nameof(AvailableEventLabels));
+    }
+
+    // Helper: remove label when events are removed/trimmed
+    private void RemoveAvailableLabel(string label)
+    {
+        var normalized = NormalizeLabel(label);
+        if (string.IsNullOrWhiteSpace(normalized)) return;
+
+        if (!_availableLabelCounts.TryGetValue(normalized, out var cnt)) return;
+        if (cnt > 1)
+        {
+            _availableLabelCounts[normalized] = cnt - 1;
+            return;
+        }
+
+        // Count was 1 -> remove
+        _availableLabelCounts.Remove(normalized);
+        var idx = -1;
+        for (var i = 0; i < _availableEventLabels.Count; i++)
+        {
+            if (string.Equals(_availableEventLabels[i], normalized, StringComparison.Ordinal))
+            {
+                idx = i;
+                break;
+            }
+        }
+
+        if (idx >= 0)
+        {
+            _availableEventLabels.RemoveAt(idx);
+            OnPropertyChanged(nameof(AvailableEventLabels));
+        }
+    }
+
     private void OnTick(object? sender, EventArgs e)
     {
         var now = DateTimeOffset.UtcNow;
@@ -995,6 +1194,36 @@ public class TimelineViewModel : ObservableObject, IDisposable
         if (IsLive)
         {
             ViewportEnd = now;
+        }
+
+        // If a trigger candidate was recorded during the holdoff window, and the
+        // holdoff interval has elapsed relative to LastTriggerTime, apply the
+        // pending trigger now (anchor to it). This allows the UI to re-anchor
+        // after the holdoff period even if no new trigger arrived outside the
+        // holdoff window.
+        if (_pendingTriggerTime is { } pending && LastTriggerTime is { } last && TriggerHoldoff > TimeSpan.Zero)
+        {
+            if (now >= last + TriggerHoldoff)
+            {
+                // Apply pending trigger. For PreShift mode, anchor using pending - TriggerHoldoff
+                var anchorTimestamp = _triggerHoldoffMode == HoldoffMode.PreShift ? pending - TriggerHoldoff : pending;
+                AnchorToTrigger(anchorTimestamp);
+                // Keep ActiveTriggerTime/LastTriggerTime as the actual trigger timestamp
+                ActiveTriggerTime = pending;
+                LastTriggerTime = pending;
+                _pendingTriggerTime = null;
+            }
+        }
+
+        // While inside a holdoff window, the view is anchored, but we still want
+        // to redraw incoming events so the user sees post-trigger activity.
+        // Raise property notifications so bindings update even though the
+        // anchor (ViewportEnd mapping) doesn't change.
+        if (LastTriggerTime is { } last2 && TriggerHoldoff > TimeSpan.Zero && now < last2 + TriggerHoldoff)
+        {
+            // Notify ViewportEnd and Tracks so the timeline control redraws.
+            OnPropertyChanged(nameof(ViewportEnd));
+            OnPropertyChanged(nameof(Tracks));
         }
     }
 

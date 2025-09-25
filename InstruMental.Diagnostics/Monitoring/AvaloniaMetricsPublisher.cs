@@ -270,6 +270,7 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
                 {
                     try
                     {
+                        Console.WriteLine("Batch flush await" + batch.Count);
                         await Task.Delay(_batchFlushInterval, _cts.Token).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException)
