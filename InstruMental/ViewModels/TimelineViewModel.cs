@@ -63,12 +63,19 @@ public class TimelineViewModel : ObservableObject, IDisposable
                     var frac = (ratio + 1.0) / 2.0; // 0..1
                     if (!double.IsFinite(frac)) frac = 0.5;
                     _triggerMeasurePositionFraction = Math.Clamp(frac, 0.0, 1.0);
-                }
-                OnPropertyChanged(nameof(TriggerMeasurePositionFraction));
-                OnPropertyChanged(nameof(TriggerMeasurePositionDivText));
-            }
-        }
-    }
+                    // Recompute absolute holdoff from the current fractional slider so
+                    // the slider remains relative to zoom: fraction * VisibleDuration.
+                    var hf = Math.Clamp(_triggerHoldoffFraction, 0.0, 1.0);
+                    var holdoffTicks = (long)Math.Round(VisibleDuration.Ticks * hf, MidpointRounding.AwayFromZero);
+                    // Update via the public property so text and dependent state stay consistent.
+                    TriggerHoldoff = TimeSpan.FromTicks(Math.Max(0L, holdoffTicks));
+                 }
+                 OnPropertyChanged(nameof(TriggerMeasurePositionFraction));
+                 // TriggerHoldoff setter will raise TriggerHoldoffFraction change.
+                 OnPropertyChanged(nameof(TriggerMeasurePositionDivText));
+             }
+         }
+     }
 
     public TimeSpan RetainedDuration => TimeSpan.FromTicks((long)(VisibleDuration.Ticks * HistoryRetentionMultiplier));
 
@@ -124,6 +131,8 @@ public class TimelineViewModel : ObservableObject, IDisposable
 
     private TimeSpan _triggerHoldoff = TimeSpan.Zero; // 0 disables holdoff
     private string _triggerHoldoffText = "0 ms";
+    // Fractional slider for holdoff: 0 = 0, 1 = VisibleDuration
+    private double _triggerHoldoffFraction;
     public string TriggerHoldoffText
     {
         get => _triggerHoldoffText;
@@ -156,6 +165,32 @@ public class TimelineViewModel : ObservableObject, IDisposable
                     _triggerHoldoffText = formatted;
                     OnPropertyChanged(nameof(TriggerHoldoffText));
                 }
+                // Update fractional slider representation when holdoff explicitly set
+                if (VisibleDuration.Ticks > 0)
+                {
+                    var frac = (double)value.Ticks / VisibleDuration.Ticks;
+                    if (!double.IsFinite(frac)) frac = 0.0;
+                    _triggerHoldoffFraction = Math.Clamp(frac, 0.0, 1.0);
+                    OnPropertyChanged(nameof(TriggerHoldoffFraction));
+                }
+            }
+        }
+    }
+    // Fractional slider property (0..1) mapping to 0..VisibleDuration
+    public double TriggerHoldoffFraction
+    {
+        get => _triggerHoldoffFraction;
+        set
+        {
+            var clamped = Math.Clamp(value, 0.0, 1.0);
+            if (SetProperty(ref _triggerHoldoffFraction, clamped))
+            {
+                // Map fraction to actual holdoff time (0..VisibleDuration)
+                var ticks = VisibleDuration.Ticks > 0
+                    ? (long)Math.Round(VisibleDuration.Ticks * clamped, MidpointRounding.AwayFromZero)
+                    : 0L;
+                TriggerHoldoff = TimeSpan.FromTicks(Math.Max(0L, ticks));
+                OnPropertyChanged(nameof(TriggerHoldoffText));
             }
         }
     }
@@ -486,12 +521,16 @@ public class TimelineViewModel : ObservableObject, IDisposable
         // Holdoff: ignore triggers that occur before the holdoff window elapses
         if (LastTriggerTime is { } last && TriggerHoldoff > TimeSpan.Zero)
         {
-            if (timestamp <= last + TriggerHoldoff)
+            if (timestamp < last + TriggerHoldoff)
             {
                 return; // still in holdoff window
             }
         }
 
+        // Always anchor to the trigger when it fires (subject to holdoff above).
+        // This matches oscilloscope behaviour where each trigger positions the
+        // window. AnchorToTrigger will allow the timeline to include a future
+        // region so the trigger can be positioned before time-zero.
         AnchorToTrigger(timestamp);
         ActiveTriggerTime = timestamp;
         LastTriggerTime = timestamp;
@@ -516,11 +555,20 @@ public class TimelineViewModel : ObservableObject, IDisposable
         if (measure < -half) measure = -half;
 
         var proposedStart = timestamp - measure - half;
-        var proposedEnd = proposedStart + vis;
 
         var bounds = GetTimelineBoundsCore();
-        var clamped = ClampWindowToBounds(proposedStart, proposedEnd, bounds);
-        ViewportEnd = clamped.End;
+        // Allow the window to extend beyond the current latest timeline timestamp
+        // (i.e. into the "future") so that the trigger can be placed before the
+        // zero offset and the view shows pre- and post-trigger regions like an
+        // oscilloscope. However, do not allow the start to go earlier than the
+        // earliest recorded timestamp.
+        var start = proposedStart;
+        if (start < bounds.Start)
+        {
+            start = bounds.Start;
+        }
+        var end = start + vis; // end may be > bounds.End (future region)
+        ViewportEnd = end;
     }
 
     private void RemoveEventFromContainers(TimelineEvent timelineEvent)
@@ -806,7 +854,11 @@ public class TimelineViewModel : ObservableObject, IDisposable
         }
 
         var now = DateTimeOffset.UtcNow;
-        if (latestEnd < now)
+        // Only extend the timeline end to the realtime "now" when the view is live.
+        // When paused (e.g. in trigger mode) we want the timeline bounds to remain
+        // anchored to the last event time so that anchoring to a trigger doesn't
+        // get clamped to the realtime clock and jump forward.
+        if (latestEnd < now && IsLive)
         {
             latestEnd = now;
         }
@@ -975,7 +1027,8 @@ public class TimelineViewModel : ObservableObject, IDisposable
             case "s": ticks = value * TimeSpan.TicksPerSecond; break;
             default: ticks = value * TimeSpan.TicksPerMillisecond; break;
         }
-        var tsTicks = (long)Math.Round(Math.Clamp(ticks, 0, TimeSpan.TicksPerSecond));
+        // Allow durations up to a day (sensible upper bound) instead of clamping to 1 second.
+        var tsTicks = (long)Math.Round(Math.Clamp(ticks, 0, TimeSpan.TicksPerDay));
         result = TimeSpan.FromTicks(tsTicks);
         return true;
     }

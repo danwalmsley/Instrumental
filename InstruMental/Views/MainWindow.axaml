@@ -66,10 +66,15 @@
             <TextBlock VerticalAlignment="Center" Margin="6,0,0,0"
                        Text="{Binding Timeline.TriggerMeasurePositionDivText}"/>
             <TextBlock Text="Holdoff:" VerticalAlignment="Center"/>
-            <TextBox Width="110"
-                     Watermark="e.g. 100 µs"
-                     ToolTip.Tip="0 to 1 s. Units: ns, µs/us, ms, s"
-                     Text="{Binding TriggerHoldoffText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+            <!-- Holdoff: slider (fraction of VisibleDuration) + editable text for precise value -->
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="6">
+                <Slider Width="160" Minimum="0" Maximum="1" SmallChange="0.01" LargeChange="0.1"
+                        Value="{Binding Timeline.TriggerHoldoffFraction, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                <TextBox Width="120"
+                         Watermark="e.g. 100 µs"
+                         ToolTip.Tip="Holdoff duration (typed) or use slider; units: ns, µs/us, ms, s"
+                         Text="{Binding Timeline.TriggerHoldoffText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+            </StackPanel>
             <TextBlock Text="Last:" VerticalAlignment="Center"/>
             <TextBlock Text="{Binding Timeline.LastTriggerTime}" VerticalAlignment="Center"/>
         </StackPanel>
