@@ -11,6 +11,7 @@ using System.Text;
 using System.Threading;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Immutable;
 using Avalonia.Media.TextFormatting;
@@ -26,11 +27,16 @@ namespace InstruMental.Monitor.Visualization;
 public class TimelinePlotControl : Control
 {
     private static readonly ILogger Logger = Log.For<TimelinePlotControl>();
-    private const bool EnableRenderTraceLogging = false;
+    private static readonly bool EnableRenderTraceLogging = false;
+    private const double HoverRadiusPixels = 14;
 
     private static readonly ImmutableSolidColorBrush PlotBackgroundBrush = new(Color.FromArgb(240, 12, 16, 24));
     private static readonly ImmutablePen GridPen = new(new ImmutableSolidColorBrush(Color.FromArgb(35, 255, 255, 255)), 1);
     private static readonly ImmutablePen TriggerMarkerPen = new(new ImmutableSolidColorBrush(Color.FromArgb(200, 255, 153, 0)), 1.5);
+    private static readonly ImmutablePen MeasurementPen = new(new ImmutableSolidColorBrush(Color.FromArgb(220, 255, 221, 109)), 1.5);
+    private static readonly ImmutableSolidColorBrush MeasurementLabelBrush = new(Color.FromArgb(255, 255, 221, 109));
+    private static readonly ImmutableSolidColorBrush MeasurementBackgroundBrush = new(Color.FromArgb(140, 35, 42, 56));
+    private static readonly ImmutableSolidColorBrush MeasurementMarkerBrush = new(Color.FromArgb(225, 255, 221, 109));
     private static readonly TextLayout EmptyStateLayout = CreateStaticTextLayout("Waiting for metrics...", 16, FontWeight.Medium, Brushes.Gray, TextAlignment.Center);
     private static readonly TextLayout TriggerLabelLayout = CreateStaticTextLayout("TRIG", 11, FontWeight.SemiBold, Brushes.Orange, TextAlignment.Center);
 
@@ -54,6 +60,10 @@ public class TimelinePlotControl : Control
     private bool _isHoldActive;
     private int _renderCounter;
     private readonly ConditionalWeakTable<TimelineSeries, SeriesTextCache> _seriesTextCaches = new();
+    private readonly List<LaneMetadata> _laneMetadata = new();
+    private RenderMetadata? _lastRenderMetadata;
+    private HoverMeasurement? _hoverMeasurement;
+    private Point? _lastPointerPosition;
 
     static TimelinePlotControl()
     {
@@ -271,6 +281,215 @@ public class TimelinePlotControl : Control
         {
             _clockTimer.Stop();
         }
+
+        _lastPointerPosition = null;
+        _hoverMeasurement = null;
+    }
+
+    protected override void OnPointerMoved(PointerEventArgs e)
+    {
+        base.OnPointerMoved(e);
+
+        var position = e.GetPosition(this);
+        _lastPointerPosition = position;
+        UpdateHoverState(position, true);
+    }
+
+    protected override void OnPointerExited(PointerEventArgs e)
+    {
+        base.OnPointerExited(e);
+
+        _lastPointerPosition = null;
+
+        if (_hoverMeasurement is not null)
+        {
+            _hoverMeasurement = null;
+            InvalidateVisual();
+        }
+    }
+
+    private void UpdateHoverState(Point position, bool requestInvalidate)
+    {
+        if (_lastRenderMetadata is not { } metadata)
+        {
+            if (_hoverMeasurement is not null)
+            {
+                _hoverMeasurement = null;
+                if (requestInvalidate)
+                {
+                    InvalidateVisual();
+                }
+            }
+
+            return;
+        }
+
+        var measurement = ComputeHoverMeasurement(position, metadata);
+        if (!Equals(_hoverMeasurement, measurement))
+        {
+            _hoverMeasurement = measurement;
+            if (requestInvalidate)
+            {
+                InvalidateVisual();
+            }
+        }
+    }
+
+    private HoverMeasurement? ComputeHoverMeasurement(Point position, RenderMetadata metadata)
+    {
+        if (_laneMetadata.Count == 0)
+        {
+            return null;
+        }
+
+        var plotLeft = metadata.LabelWidth;
+        var plotRight = metadata.LabelWidth + metadata.PlotWidth;
+
+        if (position.X < plotLeft || position.X > plotRight)
+        {
+            return null;
+        }
+
+        foreach (var lane in _laneMetadata)
+        {
+            if (!lane.HasData)
+            {
+                continue;
+            }
+
+            if (!lane.LaneRect.Contains(position))
+            {
+                continue;
+            }
+
+            var points = lane.Series.Points;
+            if (points.Count == 0)
+            {
+                continue;
+            }
+
+            var timestamp = MapXToTime(position.X, metadata.LabelWidth, metadata.PlotWidth, metadata.StartTime, metadata.EndTime);
+            var index = FindClosestPointIndex(points, timestamp);
+            if (index < 0 || index >= points.Count)
+            {
+                continue;
+            }
+
+            var current = points[index];
+            var currentX = MapTimeToX(current.Timestamp, metadata.LabelWidth, metadata.PlotWidth, metadata.StartTime, metadata.EndTime);
+            var currentY = MapValueToY(current.Value, lane.MinValue, lane.MaxValue, lane.LaneRect);
+
+            MetricPoint? previous = index > 0 ? points[index - 1] : null;
+            MetricPoint? next = index + 1 < points.Count ? points[index + 1] : null;
+
+            var leftThreshold = previous.HasValue
+                ? previous.Value.Timestamp + TimeSpan.FromTicks((current.Timestamp - previous.Value.Timestamp).Ticks / 2)
+                : DateTimeOffset.MinValue;
+
+            var rightThreshold = next.HasValue
+                ? current.Timestamp + TimeSpan.FromTicks((next.Value.Timestamp - current.Timestamp).Ticks / 2)
+                : DateTimeOffset.MaxValue;
+
+            if (timestamp < leftThreshold || timestamp > rightThreshold)
+            {
+                continue;
+            }
+
+            var previousX = previous.HasValue
+                ? MapTimeToX(previous.Value.Timestamp, metadata.LabelWidth, metadata.PlotWidth, metadata.StartTime, metadata.EndTime)
+                : (double?)null;
+            var nextX = next.HasValue
+                ? MapTimeToX(next.Value.Timestamp, metadata.LabelWidth, metadata.PlotWidth, metadata.StartTime, metadata.EndTime)
+                : (double?)null;
+
+            return new HoverMeasurement(
+                lane.Series,
+                lane.LaneRect,
+                current.Timestamp,
+                current.Value,
+                currentX,
+                currentY,
+                previous?.Timestamp,
+                previousX,
+                next?.Timestamp,
+                nextX);
+        }
+
+        return null;
+    }
+
+    private void DrawHoverMeasurement(DrawingContext context, RenderMetadata metadata, HoverMeasurement measurement)
+    {
+        var laneRect = measurement.LaneRect;
+        var baseY = laneRect.Top + Math.Min(16, laneRect.Height * 0.35);
+        var nextY = baseY + 18;
+        if (nextY > laneRect.Bottom - 10)
+        {
+            nextY = laneRect.Bottom - 10;
+            if (nextY - baseY < 12)
+            {
+                baseY = Math.Max(laneRect.Top + 10, nextY - 18);
+            }
+        }
+
+        if (measurement.PreviousTime is { } previousTime && measurement.PreviousX is { } previousX)
+        {
+            var span = measurement.CurrentTime - previousTime;
+            if (span < TimeSpan.Zero)
+            {
+                span = span.Negate();
+            }
+
+            DrawMeasurementSpan(context, metadata, measurement, previousX, measurement.CurrentX, baseY, span);
+        }
+
+        if (measurement.NextTime is { } nextTime && measurement.NextX is { } nextX)
+        {
+            var span = nextTime - measurement.CurrentTime;
+            if (span < TimeSpan.Zero)
+            {
+                span = span.Negate();
+            }
+
+            DrawMeasurementSpan(context, metadata, measurement, measurement.CurrentX, nextX, nextY, span);
+        }
+
+        context.DrawLine(MeasurementPen, new Point(measurement.CurrentX, laneRect.Top), new Point(measurement.CurrentX, laneRect.Bottom));
+        context.DrawEllipse(MeasurementMarkerBrush, null, new Point(measurement.CurrentX, measurement.CurrentY), 4, 4);
+    }
+
+    private void DrawMeasurementSpan(DrawingContext context, RenderMetadata metadata, HoverMeasurement measurement, double startX, double endX, double y, TimeSpan span)
+    {
+        var plotLeft = metadata.LabelWidth;
+        var plotRight = metadata.LabelWidth + metadata.PlotWidth;
+
+        var left = Math.Clamp(Math.Min(startX, endX), plotLeft, plotRight);
+        var right = Math.Clamp(Math.Max(startX, endX), plotLeft, plotRight);
+
+        if (right - left < 1e-3)
+        {
+            return;
+        }
+
+        context.DrawLine(MeasurementPen, new Point(left, y), new Point(right, y));
+        context.DrawLine(MeasurementPen, new Point(left, y - 6), new Point(left, y + 6));
+        context.DrawLine(MeasurementPen, new Point(right, y - 6), new Point(right, y + 6));
+
+        var label = FormatDurationLabel(span);
+        var mid = (left + right) / 2;
+        var maxWidth = Math.Max(60, right - left + 32);
+        var layout = CreateTextLayout(label, 11, FontWeight.SemiBold, MeasurementLabelBrush, TextAlignment.Center, maxWidth);
+        var textWidth = layout.WidthIncludingTrailingWhitespace;
+        var textHeight = layout.Height;
+        var laneRect = measurement.LaneRect;
+
+        var textX = Math.Clamp(mid - textWidth / 2, Math.Max(plotLeft, laneRect.Left), Math.Min(plotRight, laneRect.Right) - textWidth);
+        var textY = Math.Max(laneRect.Top, y - textHeight - 6);
+
+        var textRect = new Rect(textX, textY, textWidth, textHeight);
+        var backgroundRect = new Rect(textRect.X - 6, textRect.Y - 3, textRect.Width + 12, textRect.Height + 6);
+        context.FillRectangle(MeasurementBackgroundBrush, backgroundRect);
+        layout.Draw(context, new Point(textRect.X, textRect.Y));
     }
 
     public override void Render(DrawingContext context)
@@ -315,6 +534,10 @@ public class TimelinePlotControl : Control
         var startTime = window.Start;
         var endTime = window.End;
 
+        _laneMetadata.Clear();
+        var metadata = new RenderMetadata(labelWidth, plotWidth, topPadding, plotHeight, startTime, endTime);
+        _lastRenderMetadata = metadata;
+
         DrawTimeGrid(context, labelWidth, topPadding, plotWidth, plotHeight, startTime, endTime);
 
         for (var index = 0; index < seriesList.Count; index++)
@@ -324,7 +547,19 @@ public class TimelinePlotControl : Control
             var laneRect = new Rect(labelWidth, laneTop, plotWidth, laneHeight);
             DrawLaneBackground(context, laneRect, index);
             DrawSeriesLabel(context, series, new Rect(0, laneTop, labelWidth - 8, laneHeight));
-            DrawSeries(context, series, laneRect, startTime, endTime);
+            var renderResult = DrawSeries(context, series, laneRect, startTime, endTime);
+            _laneMetadata.Add(new LaneMetadata(series, laneRect, renderResult.HasData, renderResult.Min, renderResult.Max));
+        }
+
+        HoverMeasurement? hoverMeasurement = null;
+        if (_lastPointerPosition is { } pointer)
+        {
+            hoverMeasurement = ComputeHoverMeasurement(pointer, metadata);
+            _hoverMeasurement = hoverMeasurement;
+        }
+        else
+        {
+            _hoverMeasurement = null;
         }
 
         if (window.IsTriggered)
@@ -333,6 +568,11 @@ public class TimelinePlotControl : Control
         }
 
         DrawTimeAxis(context, labelWidth, topPadding, plotWidth, plotHeight, startTime, endTime, window.IsTriggered, window.Anchor);
+
+        if (hoverMeasurement is not null)
+        {
+            DrawHoverMeasurement(context, metadata, hoverMeasurement);
+        }
 
         _renderCounter++;
         if ((_renderCounter & 63) == 0)
@@ -1234,18 +1474,22 @@ public class TimelinePlotControl : Control
         latestLayout.Draw(context, labelRect.TopLeft + new Vector(12, labelRect.Height / 2));
     }
 
-    private void DrawSeries(DrawingContext context, TimelineSeries series, Rect laneRect, DateTimeOffset startTime, DateTimeOffset endTime)
+    private SeriesRenderResult DrawSeries(DrawingContext context, TimelineSeries series, Rect laneRect, DateTimeOffset startTime, DateTimeOffset endTime)
     {
         if (!SeriesRenderBuilder.TryCreate(series, laneRect, startTime, endTime, out var builder))
         {
-            return;
+            return SeriesRenderResult.Empty;
         }
 
         var renderBuilder = builder;
         if (renderBuilder is null)
         {
-            return;
+            return SeriesRenderResult.Empty;
         }
+
+        var min = double.NaN;
+        var max = double.NaN;
+        var hasData = false;
 
         using (renderBuilder)
         {
@@ -1271,9 +1515,15 @@ public class TimelinePlotControl : Control
                 context.DrawEllipse(series.Stroke, null, renderBuilder.LatestPoint, 3, 3);
             }
 
-        var cache = GetSeriesTextCache(series);
-        DrawRangeAnnotations(context, laneRect, renderBuilder.Min, renderBuilder.Max, series, cache);
+            var cache = GetSeriesTextCache(series);
+            DrawRangeAnnotations(context, laneRect, renderBuilder.Min, renderBuilder.Max, series, cache);
+
+            min = renderBuilder.Min;
+            max = renderBuilder.Max;
+            hasData = renderBuilder.PointCount > 0;
         }
+
+        return new SeriesRenderResult(hasData, min, max);
     }
 
     private void DrawRangeAnnotations(DrawingContext context, Rect laneRect, double min, double max, TimelineSeries series, SeriesTextCache cache)
@@ -1294,6 +1544,86 @@ public class TimelinePlotControl : Control
         var elapsed = (timestamp - startTime).TotalSeconds;
         var progress = Math.Clamp(elapsed / totalSeconds, 0, 1);
         return labelWidth + progress * plotWidth;
+    }
+
+    private static DateTimeOffset MapXToTime(double positionX, double labelWidth, double plotWidth, DateTimeOffset startTime, DateTimeOffset endTime)
+    {
+        if (plotWidth <= 0)
+        {
+            return startTime;
+        }
+
+        var clampedProgress = (positionX - labelWidth) / plotWidth;
+        clampedProgress = Math.Clamp(clampedProgress, 0, 1);
+        var durationSeconds = Math.Max(1e-9, (endTime - startTime).TotalSeconds);
+        return startTime + TimeSpan.FromSeconds(clampedProgress * durationSeconds);
+    }
+
+    private static double MapValueToY(double value, double min, double max, Rect laneRect)
+    {
+        var height = Math.Max(1, laneRect.Height - 12);
+        var bottom = laneRect.Bottom - 6;
+
+        if (!double.IsFinite(min) || !double.IsFinite(max) || Math.Abs(max - min) < 1e-9)
+        {
+            return bottom - height / 2;
+        }
+
+        var normalized = (value - min) / (max - min);
+        if (!double.IsFinite(normalized))
+        {
+            normalized = 0.5;
+        }
+
+        normalized = Math.Clamp(normalized, 0, 1);
+        return bottom - normalized * height;
+    }
+
+    private static int FindClosestPointIndex(IList<MetricPoint> points, DateTimeOffset timestamp)
+    {
+        if (points.Count == 0)
+        {
+            return -1;
+        }
+
+        var low = 0;
+        var high = points.Count - 1;
+
+        while (low <= high)
+        {
+            var mid = (low + high) >> 1;
+            var midTime = points[mid].Timestamp;
+            if (midTime < timestamp)
+            {
+                low = mid + 1;
+            }
+            else if (midTime > timestamp)
+            {
+                high = mid - 1;
+            }
+            else
+            {
+                return mid;
+            }
+        }
+
+        var candidate = Math.Clamp(low, 0, points.Count - 1);
+
+        if (candidate > 0 && candidate < points.Count)
+        {
+            var previous = points[candidate - 1];
+            var current = points[candidate];
+            var previousDelta = Math.Abs((timestamp - previous.Timestamp).Ticks);
+            var currentDelta = Math.Abs((current.Timestamp - timestamp).Ticks);
+            return currentDelta <= previousDelta ? candidate : candidate - 1;
+        }
+
+        if (candidate >= points.Count)
+        {
+            return points.Count - 1;
+        }
+
+        return candidate;
     }
 
     private void DrawTimeGrid(DrawingContext context, double labelWidth, double topPadding, double plotWidth, double plotHeight, DateTimeOffset startTime, DateTimeOffset endTime)
@@ -1348,6 +1678,83 @@ public class TimelinePlotControl : Control
             var position = new Point(x - textLayout.WidthIncludingTrailingWhitespace / 2, topPadding + plotHeight + 6);
             textLayout.Draw(context, position);
         }
+    }
+
+    private sealed record HoverMeasurement(
+        TimelineSeries Series,
+        Rect LaneRect,
+        DateTimeOffset CurrentTime,
+        double CurrentValue,
+        double CurrentX,
+        double CurrentY,
+        DateTimeOffset? PreviousTime,
+        double? PreviousX,
+        DateTimeOffset? NextTime,
+        double? NextX);
+
+    private sealed class LaneMetadata
+    {
+        public LaneMetadata(TimelineSeries series, Rect laneRect, bool hasData, double minValue, double maxValue)
+        {
+            Series = series;
+            LaneRect = laneRect;
+            HasData = hasData;
+            MinValue = minValue;
+            MaxValue = maxValue;
+        }
+
+        public TimelineSeries Series { get; }
+
+        public Rect LaneRect { get; }
+
+        public bool HasData { get; }
+
+        public double MinValue { get; }
+
+        public double MaxValue { get; }
+    }
+
+    private readonly struct RenderMetadata
+    {
+        public RenderMetadata(double labelWidth, double plotWidth, double topPadding, double plotHeight, DateTimeOffset startTime, DateTimeOffset endTime)
+        {
+            LabelWidth = labelWidth;
+            PlotWidth = plotWidth;
+            TopPadding = topPadding;
+            PlotHeight = plotHeight;
+            StartTime = startTime;
+            EndTime = endTime;
+        }
+
+        public double LabelWidth { get; }
+
+        public double PlotWidth { get; }
+
+        public double TopPadding { get; }
+
+        public double PlotHeight { get; }
+
+        public DateTimeOffset StartTime { get; }
+
+        public DateTimeOffset EndTime { get; }
+    }
+
+    private readonly struct SeriesRenderResult
+    {
+        public SeriesRenderResult(bool hasData, double min, double max)
+        {
+            HasData = hasData;
+            Min = min;
+            Max = max;
+        }
+
+        public bool HasData { get; }
+
+        public double Min { get; }
+
+        public double Max { get; }
+
+        public static SeriesRenderResult Empty { get; } = new(false, double.NaN, double.NaN);
     }
 
     private sealed class SeriesRenderBuilder : IDisposable
@@ -1797,6 +2204,33 @@ public class TimelinePlotControl : Control
         }
 
         return timestamp.ToLocalTime().ToString("HH:mm");
+    }
+
+    private static string FormatDurationLabel(TimeSpan span)
+    {
+        var seconds = Math.Abs(span.TotalSeconds);
+
+        if (double.IsNaN(seconds) || double.IsInfinity(seconds))
+        {
+            return "0 s";
+        }
+
+        if (seconds >= 1)
+        {
+            return $"{seconds:0.###} s";
+        }
+
+        if (seconds >= 1e-3)
+        {
+            return $"{seconds * 1_000:0.###} msec";
+        }
+
+        if (seconds >= 1e-6)
+        {
+            return $"{seconds * 1_000_000:0.###} usec";
+        }
+
+        return $"{seconds * 1_000_000_000:0.###} nsec";
     }
 
     private static string FormatRelativeOffset(double seconds)

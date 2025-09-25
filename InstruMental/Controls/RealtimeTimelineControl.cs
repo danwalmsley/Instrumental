@@ -32,6 +32,7 @@ public class RealtimeTimelineControl : Control
 
     private readonly Dictionary<TimelineTrack, NotifyCollectionChangedEventHandler?> _trackHandlers = new();
     private readonly Dictionary<TimelineEvent, NotifyCollectionChangedEventHandler> _eventChildHandlers = new();
+    private readonly Dictionary<TimelineTrack, Rect> _trackBounds = new();
     private static readonly ImmutableSolidColorBrush TrackBackgroundBrush = new(Color.FromArgb(24, 255, 255, 255));
     private static readonly ImmutableSolidColorBrush LabelAreaBackgroundBrush = new(Color.FromArgb(12, 255, 255, 255));
     private static readonly ImmutableSolidColorBrush LabelTextBrush = new(Color.FromArgb(220, 255, 255, 255));
@@ -49,6 +50,11 @@ public class RealtimeTimelineControl : Control
     private const int OscilloscopeMajorDivisions = 10; // Standard number of time divisions across width
     private const int OscilloscopeMinorSubdivisions = 5; // Minor subdivisions per major division
     private static readonly Pen TriggerPen = new(new ImmutableSolidColorBrush(Color.FromArgb(224, 0, 200, 255)), 2);
+    private static readonly Pen MeasurementPen = new(new ImmutableSolidColorBrush(Color.FromArgb(220, 255, 221, 109)), 1.5);
+    private static readonly ImmutableSolidColorBrush MeasurementLabelBrush = new(Color.FromArgb(255, 255, 221, 109));
+    private static readonly ImmutableSolidColorBrush MeasurementBackgroundBrush = new(Color.FromArgb(180, 35, 42, 56));
+    private static readonly ImmutableSolidColorBrush MeasurementHighlightBrush = new(Color.FromArgb(40, 255, 221, 109));
+    private static readonly Pen MeasurementBorderPen = new(MeasurementLabelBrush, 1);
 
     private Rect _summaryBounds;
     private Rect _summaryWindowBounds;
@@ -56,6 +62,10 @@ public class RealtimeTimelineControl : Control
     private bool _isSummaryDragging;
     private Point _lastPointerPosition;
     private double _summaryDragOffsetRatio;
+    private Point? _lastHoverPosition;
+    private readonly List<EventVisual> _eventVisuals = new();
+    private EventHoverMeasurement? _hoverMeasurement;
+    private RenderContext? _lastRenderContext;
 
     public static readonly StyledProperty<IList<TimelineTrack>?> TracksProperty =
         AvaloniaProperty.Register<RealtimeTimelineControl, IList<TimelineTrack>?>(nameof(Tracks));
@@ -382,11 +392,17 @@ public class RealtimeTimelineControl : Control
         var background = this.Background ?? Brushes.Transparent;
         context.DrawRectangle(background, null, new Rect(Bounds.Size));
 
+    _eventVisuals.Clear();
+    _trackBounds.Clear();
+    _lastRenderContext = null;
+
         // Total content height excluding summary section
         var contentHeight = Math.Max(0, height - SummaryHeight - SummarySpacing);
         var desiredInfoBarHeight = Math.Max(0, InfoBarHeight);
         var infoBarHeight = Math.Min(desiredInfoBarHeight, contentHeight); // clamp if very small
         var tracksContentHeight = Math.Max(0, contentHeight - infoBarHeight);
+
+        _lastRenderContext = new RenderContext(windowStart, now, width, tracksContentHeight);
 
         // Draw time grid only over track content area (not info bar)
         DrawTimeGrid(context, windowStart, now, visibleDuration, width, tracksContentHeight);
@@ -407,6 +423,7 @@ public class RealtimeTimelineControl : Control
                 var track = tracks[index];
                 var trackBounds = new Rect(0, top, width, trackHeight);
                 var labelArea = new Rect(0, trackBounds.Bottom, width, TrackLabelAreaHeight);
+                _trackBounds[track] = trackBounds;
                 DrawTrack(context, track, windowStart, now, width, trackBounds, labelArea);
                 top += stride;
             }
@@ -417,6 +434,18 @@ public class RealtimeTimelineControl : Control
 
         // Current time indicator spans only tracks+labels, not info bar
         DrawCurrentTimeIndicator(context, windowStart, now, width, tracksContentHeight);
+
+        EventHoverMeasurement? measurement = null;
+        if (_lastHoverPosition is { } hoverPosition && _lastRenderContext is { } renderContext)
+        {
+            measurement = ComputeHoverMeasurement(hoverPosition, renderContext);
+        }
+
+        _hoverMeasurement = measurement;
+        if (measurement is { } resolvedMeasurement)
+        {
+            DrawHoverMeasurement(context, resolvedMeasurement);
+        }
 
         // Info bar rectangle directly after tracks content
         var infoBarTop = tracksContentHeight;
@@ -589,7 +618,7 @@ public class RealtimeTimelineControl : Control
                 next = eventsList[i + 1];
                 nextLeft = TimeToX(next.Start, windowStart, windowEnd, width);
             }
-            DrawEvent(context, evt, windowStart, windowEnd, width, trackBounds, labelArea, depth: 0, prevEventRight: prevRight, nextEventLeft: nextLeft);
+            DrawEvent(context, track, evt, windowStart, windowEnd, width, trackBounds, trackBounds, labelArea, 0, prevRight, nextLeft);
         }
     }
 
@@ -705,7 +734,7 @@ public class RealtimeTimelineControl : Control
         return sampledEvents.Concat(recentEvents).Distinct().OrderBy(evt => evt.Start);
     }
 
-    private void DrawEvent(DrawingContext context, TimelineEvent timelineEvent, DateTimeOffset windowStart, DateTimeOffset windowEnd, double width, Rect availableBounds, Rect labelArea, int depth, double? prevEventRight = null, double? nextEventLeft = null)
+    private void DrawEvent(DrawingContext context, TimelineTrack track, TimelineEvent timelineEvent, DateTimeOffset windowStart, DateTimeOffset windowEnd, double width, Rect trackBounds, Rect availableBounds, Rect labelArea, int depth, double? prevEventRight = null, double? nextEventLeft = null)
     {
         // Check initial visibility against the window
         var eventEnd = timelineEvent.End ?? windowEnd;
@@ -741,6 +770,12 @@ public class RealtimeTimelineControl : Control
         }
 
         var rect = new Rect(startX + margin, top + margin, innerWidth, targetHeight);
+        var clampedEnd = timelineEvent.End ?? windowEnd;
+        if (clampedEnd < timelineEvent.Start)
+        {
+            clampedEnd = timelineEvent.Start;
+        }
+        _eventVisuals.Add(new EventVisual(track, timelineEvent, rect, trackBounds, timelineEvent.Start, clampedEnd, depth));
         var roundedRect = new RoundedRect(rect, timelineEvent.CornerRadius);
         context.DrawRectangle(timelineEvent.Fill, null, roundedRect);
 
@@ -869,7 +904,7 @@ public class RealtimeTimelineControl : Control
         }
         foreach (var child in timelineEvent.Children)
         {
-            DrawEvent(context, child, windowStart, windowEnd, width, rect, labelArea, depth + 1);
+            DrawEvent(context, track, child, windowStart, windowEnd, width, trackBounds, rect, labelArea, depth + 1);
         }
     }
 
@@ -1060,6 +1095,116 @@ public class RealtimeTimelineControl : Control
         context.DrawLine(CurrentTimePen, startPoint, endPoint);
     }
 
+    private void DrawHoverMeasurement(DrawingContext context, EventHoverMeasurement measurement)
+    {
+        var contextInfo = measurement.Context;
+        var trackBounds = measurement.TrackBounds;
+        var visibleGap = measurement.VisibleGapBounds;
+        var pointerX = Math.Clamp(measurement.PointerX, trackBounds.Left, trackBounds.Right);
+
+        var previousEndX = Math.Clamp(TimeToX(measurement.PreviousEventEnd, contextInfo.WindowStart, contextInfo.WindowEnd, contextInfo.Width), trackBounds.Left, trackBounds.Right);
+        var nextStartX = Math.Clamp(TimeToX(measurement.NextEventStart, contextInfo.WindowStart, contextInfo.WindowEnd, contextInfo.Width), trackBounds.Left, trackBounds.Right);
+
+        var highlightRect = visibleGap.Width <= 0
+            ? new Rect(pointerX, trackBounds.Top, 1, trackBounds.Height)
+            : visibleGap;
+
+        context.DrawRectangle(MeasurementHighlightBrush, null, highlightRect);
+
+        context.DrawLine(MeasurementPen, new Point(previousEndX, trackBounds.Top), new Point(previousEndX, trackBounds.Bottom));
+        context.DrawLine(MeasurementPen, new Point(nextStartX, trackBounds.Top), new Point(nextStartX, trackBounds.Bottom));
+        context.DrawLine(MeasurementPen, new Point(pointerX, trackBounds.Top), new Point(pointerX, trackBounds.Bottom));
+
+        var midY = highlightRect.Top + highlightRect.Height / 2;
+        context.DrawLine(MeasurementPen, new Point(previousEndX, midY), new Point(nextStartX, midY));
+        context.DrawLine(MeasurementPen, new Point(previousEndX, midY - 4), new Point(previousEndX, midY + 4));
+        context.DrawLine(MeasurementPen, new Point(nextStartX, midY - 4), new Point(nextStartX, midY + 4));
+        context.DrawLine(MeasurementPen, new Point(pointerX, midY - 4), new Point(pointerX, midY + 4));
+
+        var previousLabel = string.IsNullOrWhiteSpace(measurement.PreviousEvent.Label) ? "Previous event" : measurement.PreviousEvent.Label;
+        var nextLabel = string.IsNullOrWhiteSpace(measurement.NextEvent.Label) ? "Next event" : measurement.NextEvent.Label;
+        var pointerTimeText = measurement.PointerTime.ToLocalTime().ToString("HH:mm:ss.fff", CultureInfo.CurrentCulture);
+        var gapDuration = measurement.NextEventStart - measurement.PreviousEventEnd;
+
+        static FormattedText CreateText(string text, double size, FontWeight weight = FontWeight.Normal)
+        {
+            return new FormattedText(
+                text,
+                CultureInfo.CurrentCulture,
+                FlowDirection.LeftToRight,
+                new Typeface("Segoe UI", FontStyle.Normal, weight),
+                size,
+                MeasurementLabelBrush);
+        }
+
+        var header = CreateText($"{previousLabel} → {nextLabel}", 12, FontWeight.SemiBold);
+        var gapText = CreateText($"Gap {FormatDuration(gapDuration)}", 11);
+        var pointerText = CreateText($"Pointer {pointerTimeText}", 11);
+        var afterText = CreateText($"{FormatDuration(measurement.AfterPrevious)} after previous", 11);
+        var beforeText = CreateText($"{FormatDuration(measurement.BeforeNext)} before next", 11);
+
+        var maxWidth = new[] { header.Width, gapText.Width, pointerText.Width, afterText.Width, beforeText.Width }.Max();
+        const double paddingX = 6;
+        const double paddingY = 4;
+        const double lineSpacing = 2;
+        const double verticalMargin = 8;
+        const double controlMargin = 2;
+        var bubbleWidth = maxWidth + paddingX * 2;
+        var bubbleHeight = header.Height + gapText.Height + pointerText.Height + afterText.Height + beforeText.Height + (4 * lineSpacing) + paddingY * 2;
+
+        var gapCenter = visibleGap.Left + visibleGap.Width / 2;
+        var bubbleX = gapCenter - bubbleWidth / 2;
+        bubbleX = Math.Clamp(bubbleX, trackBounds.Left + controlMargin, trackBounds.Right - bubbleWidth - controlMargin);
+
+        var controlHeight = Bounds.Height;
+        var availableAbove = trackBounds.Top;
+        var availableBelow = controlHeight - trackBounds.Bottom;
+        var placeAbove = availableAbove >= availableBelow;
+
+        var aboveCandidate = trackBounds.Top - bubbleHeight - verticalMargin;
+        var belowCandidate = trackBounds.Bottom + verticalMargin;
+
+        var maxAboveY = trackBounds.Top - bubbleHeight - controlMargin;
+        var minBelowY = trackBounds.Bottom + controlMargin;
+        var maxBelowY = controlHeight - bubbleHeight - controlMargin;
+
+        bool canPlaceAbove = maxAboveY >= controlMargin;
+        bool canPlaceBelow = minBelowY <= maxBelowY;
+
+        double bubbleY;
+        if ((placeAbove && canPlaceAbove) || (!canPlaceBelow && canPlaceAbove))
+        {
+            bubbleY = Math.Clamp(aboveCandidate, controlMargin, maxAboveY);
+        }
+        else if (canPlaceBelow)
+        {
+            bubbleY = Math.Clamp(belowCandidate, minBelowY, maxBelowY);
+        }
+        else if (canPlaceAbove)
+        {
+            bubbleY = Math.Clamp(aboveCandidate, controlMargin, maxAboveY);
+        }
+        else
+        {
+            bubbleY = Math.Clamp(belowCandidate, controlMargin, controlHeight - bubbleHeight - controlMargin);
+        }
+
+        var bubbleRect = new Rect(bubbleX, bubbleY, bubbleWidth, bubbleHeight);
+        context.DrawRectangle(MeasurementBackgroundBrush, MeasurementBorderPen, bubbleRect);
+
+        var textX = bubbleRect.X + paddingX;
+        var textY = bubbleRect.Y + paddingY;
+        context.DrawText(header, new Point(textX, textY));
+        textY += header.Height + lineSpacing;
+        context.DrawText(gapText, new Point(textX, textY));
+        textY += gapText.Height + lineSpacing;
+        context.DrawText(pointerText, new Point(textX, textY));
+        textY += pointerText.Height + lineSpacing;
+        context.DrawText(afterText, new Point(textX, textY));
+        textY += afterText.Height + lineSpacing;
+        context.DrawText(beforeText, new Point(textX, textY));
+    }
+
     private static double TimeToX(DateTimeOffset value, DateTimeOffset windowStart, DateTimeOffset windowEnd, double width)
     {
         var total = (windowEnd - windowStart).TotalMilliseconds;
@@ -1175,6 +1320,8 @@ public class RealtimeTimelineControl : Control
 
         var position = point.Position;
         _lastPointerPosition = position;
+        _lastHoverPosition = null;
+        ClearHoverMeasurement(true);
 
         if (_summaryBounds.Contains(position) && _summaryWindowBounds.Width > 0)
         {
@@ -1201,13 +1348,19 @@ public class RealtimeTimelineControl : Control
             return;
         }
 
+        var position = e.GetPosition(this);
         if (!_isPanning && !_isSummaryDragging)
         {
+            _lastPointerPosition = position;
+            _lastHoverPosition = position;
+            UpdateHoverMeasurement(position, true);
             return;
         }
 
-        var position = e.GetPosition(this);
         var delta = position - _lastPointerPosition;
+        _lastPointerPosition = position;
+        _lastHoverPosition = null;
+        ClearHoverMeasurement(true);
 
         if (_isPanning && Bounds.Width > 0)
         {
@@ -1230,8 +1383,6 @@ public class RealtimeTimelineControl : Control
                 e.Handled = true;
             }
         }
-
-        _lastPointerPosition = position;
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
@@ -1243,8 +1394,28 @@ public class RealtimeTimelineControl : Control
             e.Pointer.Capture(null);
         }
 
+        var position = e.GetPosition(this);
+        _lastPointerPosition = position;
         _isPanning = false;
         _isSummaryDragging = false;
+
+        if (Bounds.Contains(position))
+        {
+            _lastHoverPosition = position;
+            UpdateHoverMeasurement(position, true);
+        }
+        else
+        {
+            _lastHoverPosition = null;
+            ClearHoverMeasurement(true);
+        }
+    }
+
+    protected override void OnPointerExited(PointerEventArgs e)
+    {
+        base.OnPointerExited(e);
+        _lastHoverPosition = null;
+        ClearHoverMeasurement(true);
     }
 
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
@@ -1271,6 +1442,153 @@ public class RealtimeTimelineControl : Control
         var scale = delta > 0 ? 0.8 : 1.25;
         timeline.ZoomAround(anchor, scale, offsetRatio);
         e.Handled = true;
+    }
+
+    private void UpdateHoverMeasurement(Point position, bool requestRender)
+    {
+        if (_lastRenderContext is not { } context)
+        {
+            return;
+        }
+
+        var measurement = ComputeHoverMeasurement(position, context);
+
+        if (_hoverMeasurement is null && measurement is null)
+        {
+            return;
+        }
+
+        if (_hoverMeasurement is { } existing && measurement is { } updated && existing.Equals(updated))
+        {
+            return;
+        }
+
+        _hoverMeasurement = measurement;
+        if (requestRender)
+        {
+            QueueInvalidateVisual();
+        }
+    }
+
+    private void ClearHoverMeasurement(bool requestRender)
+    {
+        if (_hoverMeasurement is null)
+        {
+            return;
+        }
+
+        _hoverMeasurement = null;
+        if (requestRender)
+        {
+            QueueInvalidateVisual();
+        }
+    }
+
+    private EventHoverMeasurement? ComputeHoverMeasurement(Point position, RenderContext context)
+    {
+        TimelineTrack? track = null;
+        Rect trackBounds = default;
+
+        foreach (var kvp in _trackBounds)
+        {
+            if (kvp.Value.Contains(position))
+            {
+                track = kvp.Key;
+                trackBounds = kvp.Value;
+                break;
+            }
+        }
+
+        if (track is null)
+        {
+            return null;
+        }
+
+        var rootEvents = track.Events
+            .OrderBy(evt => evt.Start)
+            .ToList();
+
+        if (rootEvents.Count < 2)
+        {
+            return null;
+        }
+
+        var pointerX = Math.Clamp(position.X, trackBounds.Left, trackBounds.Right);
+        var pointerTime = XToTime(pointerX, context.WindowStart, context.WindowEnd, context.Width);
+
+        TimelineEvent? previousEvent = null;
+        DateTimeOffset? previousEnd = null;
+        TimelineEvent? nextEvent = null;
+        DateTimeOffset? nextStart = null;
+
+        foreach (var evt in rootEvents)
+        {
+            if (evt.End is { } end && end <= pointerTime)
+            {
+                if (previousEnd is null || end >= previousEnd)
+                {
+                    previousEvent = evt;
+                    previousEnd = end;
+                }
+            }
+
+            if (nextEvent is null && evt.Start >= pointerTime)
+            {
+                nextEvent = evt;
+                nextStart = evt.Start;
+            }
+
+            if (previousEvent is not null && nextEvent is not null && evt.Start > pointerTime)
+            {
+                break;
+            }
+        }
+
+        if (previousEvent is null || previousEnd is null || nextEvent is null || nextStart is null)
+        {
+            return null;
+        }
+
+        if (nextStart <= previousEnd)
+        {
+            return null;
+        }
+
+        if (pointerTime < previousEnd || pointerTime > nextStart)
+        {
+            return null;
+        }
+
+        var gapStartX = TimeToX(previousEnd.Value, context.WindowStart, context.WindowEnd, context.Width);
+        var gapEndX = TimeToX(nextStart.Value, context.WindowStart, context.WindowEnd, context.Width);
+
+        var visibleStartX = Math.Clamp(gapStartX, trackBounds.Left, trackBounds.Right);
+        var visibleEndX = Math.Clamp(gapEndX, trackBounds.Left, trackBounds.Right);
+
+        if (visibleEndX < visibleStartX)
+        {
+            (visibleStartX, visibleEndX) = (visibleEndX, visibleStartX);
+        }
+
+        var visibleWidth = Math.Max(1, visibleEndX - visibleStartX);
+        var visibleGap = new Rect(visibleStartX, trackBounds.Top, visibleWidth, trackBounds.Height);
+
+        var afterPrevious = pointerTime - previousEnd.Value;
+        var beforeNext = nextStart.Value - pointerTime;
+
+        return new EventHoverMeasurement(
+            context,
+            track,
+            previousEvent,
+            nextEvent,
+            previousEnd.Value,
+            nextStart.Value,
+            trackBounds,
+            visibleGap,
+            pointerX,
+            pointerTime,
+            afterPrevious,
+            beforeNext);
     }
 
     private void AttachEvent(TimelineEvent timelineEvent)
@@ -1326,6 +1644,58 @@ public class RealtimeTimelineControl : Control
             DetachEvent(child);
         }
     }
+
+    private sealed class RenderContext
+    {
+        public RenderContext(DateTimeOffset windowStart, DateTimeOffset windowEnd, double width, double trackAreaHeight)
+        {
+            WindowStart = windowStart;
+            WindowEnd = windowEnd;
+            Width = width;
+            TrackAreaHeight = trackAreaHeight;
+        }
+
+        public DateTimeOffset WindowStart { get; }
+        public DateTimeOffset WindowEnd { get; }
+        public double Width { get; }
+        public double TrackAreaHeight { get; }
+    }
+
+    private sealed class EventVisual
+    {
+        public EventVisual(TimelineTrack track, TimelineEvent timelineEvent, Rect bounds, Rect trackBounds, DateTimeOffset start, DateTimeOffset end, int depth)
+        {
+            Track = track;
+            Event = timelineEvent;
+            Bounds = bounds;
+            TrackBounds = trackBounds;
+            Start = start;
+            End = end;
+            Depth = depth;
+        }
+
+        public TimelineTrack Track { get; }
+        public TimelineEvent Event { get; }
+        public Rect Bounds { get; }
+        public Rect TrackBounds { get; }
+        public DateTimeOffset Start { get; }
+        public DateTimeOffset End { get; }
+        public int Depth { get; }
+    }
+
+    private sealed record EventHoverMeasurement(
+        RenderContext Context,
+        TimelineTrack Track,
+        TimelineEvent PreviousEvent,
+        TimelineEvent NextEvent,
+        DateTimeOffset PreviousEventEnd,
+        DateTimeOffset NextEventStart,
+        Rect TrackBounds,
+        Rect VisibleGapBounds,
+        double PointerX,
+        DateTimeOffset PointerTime,
+        TimeSpan AfterPrevious,
+        TimeSpan BeforeNext);
 
     private static double CalculateGridStep(double totalSeconds, int targetLines)
     {
