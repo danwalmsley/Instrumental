@@ -190,25 +190,33 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
         return null;
     }
 
-    // Curated palette of dark, saturated (Material 800/900-style) colors that maintain contrast with white text.
+    // Curated palette of bold, saturated colors. These are brighter/bolder than the previous dark palette
+    // and intentionally chosen to be visually distinctive when cycled through.
     private static readonly Color[] s_colorPalette = new[]
     {
-        Color.FromArgb(255, 183, 28, 28),  // #B71C1C - Red 900
-        Color.FromArgb(255, 198, 40, 40),  // #C62828 - Red 800
-        Color.FromArgb(255, 173, 20, 87),  // #AD1457 - Pink 800
-        Color.FromArgb(255, 106, 27, 154), // #6A1B9A - Purple 800
-        Color.FromArgb(255, 69, 39, 160),  // #4527A0 - Deep Purple 800
-        Color.FromArgb(255, 13, 71, 161),  // #0D47A1 - Blue 900
-        Color.FromArgb(255, 2, 70, 122),   // #02467A - Deep blue variant
-        Color.FromArgb(255, 0, 77, 64),    // #004D40 - Teal 900
-        Color.FromArgb(255, 0, 96, 100),   // #006064 - Teal 800
-        Color.FromArgb(255, 27, 94, 32),   // #1B5E20 - Green 900
-        Color.FromArgb(255, 46, 125, 50),  // #2E7D32 - Green 700 (kept)
-        Color.FromArgb(255, 93, 64, 55),   // #5D4037 - Brown 700 (kept)
-        Color.FromArgb(255, 69, 90, 100),  // #455A64 - Blue Grey 700 (kept)
-        Color.FromArgb(255, 55, 71, 79),   // #37474F - Blue Grey 800 (kept)
-        Color.FromArgb(255, 38, 50, 56),   // #263238 - Blue Grey 900
+        Color.FromArgb(255, 244, 67, 54),   // #F44336 - Red 500
+        Color.FromArgb(255, 255, 87, 34),   // #FF5722 - Deep Orange 500
+        Color.FromArgb(255, 255, 193, 7),   // #FFC107 - Amber 500
+        Color.FromArgb(255, 255, 235, 59),  // #FFEB3B - Yellow 500
+        Color.FromArgb(255, 139, 195, 74),  // #8BC34A - Light Green 500
+        Color.FromArgb(255, 76, 175, 80),   // #4CAF50 - Green 500
+        Color.FromArgb(255, 0, 188, 212),   // #00BCD4 - Cyan 500
+        Color.FromArgb(255, 3, 169, 244),   // #03A9F4 - Light Blue 500
+        Color.FromArgb(255, 33, 150, 243),  // #2196F3 - Blue 500
+        Color.FromArgb(255, 63, 81, 181),   // #3F51B5 - Indigo 500
+        Color.FromArgb(255, 156, 39, 176),  // #9C27B0 - Purple 500
+        Color.FromArgb(255, 233, 30, 99),   // #E91E63 - Pink 500
+        Color.FromArgb(255, 255, 152, 0),   // #FF9800 - Orange 500
+        Color.FromArgb(255, 121, 85, 72),   // #795548 - Brown 500
+        Color.FromArgb(255, 96, 125, 139),  // #607D8B - Blue Grey 500
     };
+
+    // Mapping of normalized name -> assigned palette color. We cycle through the palette on first-seen names
+    // so the first distinct name gets palette[0], next gets palette[1], etc. The mapping is stable for the
+    // lifetime of the app instance.
+    private static readonly Dictionary<string, Color> s_nameToColor = new();
+    private static int _sNextPaletteIndex;
+    private static readonly object s_colorLock = new();
 
     private static Color ColorFromName(string name)
     {
@@ -217,18 +225,21 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
             return Colors.SteelBlue;
         }
 
-        // Stable deterministic hash -> non-negative index into palette
-        unchecked
+        // Normalize to provide case-insensitive stable mapping
+        var key = name.ToLowerInvariant();
+
+        lock (s_colorLock)
         {
-            int hash = 17;
-            foreach (var ch in name)
+            if (s_nameToColor.TryGetValue(key, out var existing))
             {
-                hash = hash * 31 + ch;
+                return existing;
             }
 
-            // Cast to unsigned to ensure non-negative, then modulo palette length
-            var idx = (int)((uint)hash % (uint)s_colorPalette.Length);
-            return s_colorPalette[idx];
+            // Assign next color in the palette and advance the index (wrap around)
+            var color = s_colorPalette[_sNextPaletteIndex % s_colorPalette.Length];
+            s_nameToColor[key] = color;
+            _sNextPaletteIndex = (_sNextPaletteIndex + 1) % s_colorPalette.Length;
+            return color;
         }
     }
 
