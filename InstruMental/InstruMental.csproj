@@ -36,5 +36,6 @@
     <ItemGroup>
         <!-- Updated references to InstruMental projects -->
         <ProjectReference Include="..\InstruMental.Contracts\InstruMental.Contracts.csproj" />
+        <ProjectReference Include="..\InstruMental.Diagnostics\InstruMental.Diagnostics.csproj" />
     </ItemGroup>
 </Project>

@@ -18,6 +18,8 @@ public class TimelineViewModel : ObservableObject, IDisposable
     private readonly Dictionary<Guid, string> _eventTrackById = new();
     private readonly Dictionary<string, TimelineTrack> _tracksByName = new(StringComparer.OrdinalIgnoreCase);
     private const double HistoryRetentionMultiplier = 4;
+    // Number of major divisions across the visible width (matches RealtimeTimelineControl)
+    public const int OscilloscopeMajorDivisions = 10;
     public static readonly TimeSpan MinimumVisibleDuration = TimeSpan.FromTicks(10);
     public static readonly TimeSpan MaximumVisibleDuration = TimeSpan.FromSeconds(30);
 
@@ -52,6 +54,18 @@ public class TimelineViewModel : ObservableObject, IDisposable
             if (SetProperty(ref _visibleDuration, clamped))
             {
                 OnPropertyChanged(nameof(RetainedDuration));
+                // VisibleDuration affects the mapping between fraction and time offset; update derived properties
+                // Recompute fraction to keep same time offset mapping after zoom change
+                if (VisibleDuration.Ticks > 0)
+                {
+                    var half = TimeSpan.FromTicks(VisibleDuration.Ticks / 2);
+                    var ratio = half.Ticks > 0 ? (double)TriggerMeasurePosition.Ticks / half.Ticks : 0.0; // -1..1
+                    var frac = (ratio + 1.0) / 2.0; // 0..1
+                    if (!double.IsFinite(frac)) frac = 0.5;
+                    _triggerMeasurePositionFraction = Math.Clamp(frac, 0.0, 1.0);
+                }
+                OnPropertyChanged(nameof(TriggerMeasurePositionFraction));
+                OnPropertyChanged(nameof(TriggerMeasurePositionDivText));
             }
         }
     }
@@ -147,6 +161,40 @@ public class TimelineViewModel : ObservableObject, IDisposable
     }
     private TimeSpan _triggerMeasurePosition = TimeSpan.Zero; // 0 = center
     private string _triggerMeasurePositionText = "0 µs";
+    // Fractional slider position: 0 = leftmost, 1 = rightmost. Maps to TriggerMeasurePosition (time offset from center).
+    private double _triggerMeasurePositionFraction = 0.5; // center
+    public double TriggerMeasurePositionFraction
+    {
+        get => _triggerMeasurePositionFraction;
+        set
+        {
+            // clamp to [0,1]
+            var clamped = Math.Clamp(value, 0.0, 1.0);
+            if (SetProperty(ref _triggerMeasurePositionFraction, clamped))
+            {
+                // Map fraction to time offset relative to center. 0->left(-half), 0.5->center(0), 1->right(+half)
+                var half = TimeSpan.FromTicks(VisibleDuration.Ticks / 2);
+                var ratio = clamped * 2.0 - 1.0; // -1..1
+                var ticks = (long)(ratio * half.Ticks);
+                TriggerMeasurePosition = TimeSpan.FromTicks(ticks);
+                OnPropertyChanged(nameof(TriggerMeasurePositionDivText));
+            }
+        }
+    }
+
+    // Human readable division-based text e.g. "-2.50 div (-200 ms)" which takes current zoom (VisibleDuration) into account.
+    public string TriggerMeasurePositionDivText
+    {
+        get
+        {
+            var perDiv = TimeSpan.FromTicks(VisibleDuration.Ticks / OscilloscopeMajorDivisions);
+            // divisions offset relative to center (signed)
+            double divisions = perDiv.Ticks > 0 ? (double)TriggerMeasurePosition.Ticks / perDiv.Ticks : 0.0;
+            var divisionsStr = divisions.ToString("0.##", CultureInfo.CurrentCulture);
+            var timeStr = FormatDurationShort(TriggerMeasurePosition);
+            return $"{(divisions >= 0 ? "+" : "")}{divisionsStr} div ({timeStr})";
+        }
+    }
 
     public bool TriggerEnabled
     {
@@ -228,6 +276,19 @@ public class TimelineViewModel : ObservableObject, IDisposable
                     _triggerMeasurePositionText = formatted;
                     OnPropertyChanged(nameof(TriggerMeasurePositionText));
                 }
+                // Update fraction representation whenever the underlying time offset changes (or when zoom changes)
+                // Guard against division by zero
+                if (VisibleDuration.Ticks > 0)
+                {
+                    var half = TimeSpan.FromTicks(VisibleDuration.Ticks / 2);
+                    var ratio = half.Ticks > 0 ? (double)value.Ticks / half.Ticks : 0.0; // -1..1
+                    var frac = (ratio + 1.0) / 2.0; // 0..1
+                    if (!double.IsFinite(frac)) frac = 0.5;
+                    _triggerMeasurePositionFraction = Math.Clamp(frac, 0.0, 1.0);
+                    OnPropertyChanged(nameof(TriggerMeasurePositionFraction));
+                }
+                // Notify derived division-based text
+                OnPropertyChanged(nameof(TriggerMeasurePositionDivText));
                 if (TriggerEnabled && LastTriggerTime is { } t)
                 {
                     AnchorToTrigger(t);

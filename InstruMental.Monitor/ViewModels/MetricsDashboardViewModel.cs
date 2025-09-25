@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
+using System.Net;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,7 +12,7 @@ using Avalonia.Threading;
 using InstruMental.Contracts.Monitoring;
 using InstruMental.Contracts.Serialization;
 using InstruMental.Monitor.Infrastructure;
-using InstruMental.Monitor.Metrics;
+using InstruMental.Diagnostics.Services; // use shared listener
 using InstruMental.Monitor.Visualization;
 using Microsoft.Extensions.Logging;
 
@@ -70,7 +71,7 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
     public MetricsDashboardViewModel(int port, EnvelopeEncoding encoding = EnvelopeEncoding.Json)
     {
         ListeningPort = port;
-        _listener = new UdpMetricsListener(port, encoding);
+        _listener = new UdpMetricsListener(port, encoding, IPAddress.Any, Logger);
         _listener.MetricReceived += OnMetricReceived;
         _listener.ActivityReceived += OnActivityReceived;
         _listener.Start();

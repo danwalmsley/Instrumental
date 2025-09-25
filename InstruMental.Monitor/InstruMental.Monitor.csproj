@@ -26,5 +26,11 @@
   <ItemGroup>
     <!-- Updated reference -->
     <ProjectReference Include="..\InstruMental.Contracts\InstruMental.Contracts.csproj" />
+    <ProjectReference Include="..\InstruMental.Diagnostics\InstruMental.Diagnostics.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Exclude the old in-project copy of UdpMetricsListener; use the shared diagnostics implementation instead -->
+    <Compile Remove="Metrics\UdpMetricsListener.cs" />
   </ItemGroup>
 </Project>

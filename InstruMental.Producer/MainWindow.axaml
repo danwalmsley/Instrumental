@@ -6,7 +6,7 @@
         xmlns:controls="clr-namespace:InstruMental.Producer.Controls"
         mc:Ignorable="d" d:DesignWidth="1280" d:DesignHeight="768"
         x:Class="InstruMental.Producer.MainWindow"
-        Title="InstruMental Producer" MinWidth="1024" MinHeight="720" x:CompileBindings="False">
+        Title="InstruMental Producer" x:CompileBindings="False">
     <Window.DataContext>
         <vm:MainWindowViewModel/>
     </Window.DataContext>

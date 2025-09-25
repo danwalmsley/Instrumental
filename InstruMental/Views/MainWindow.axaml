@@ -59,10 +59,12 @@
                       ItemsSource="{Binding Timeline.TriggerModes}"
                       SelectedItem="{Binding Timeline.TriggerMode}"/>
             <TextBlock Text="Measure:" VerticalAlignment="Center"/>
-            <TextBox Width="110"
-                     Watermark="e.g. -100 µs"
-                     ToolTip.Tip="Horizontal offset from center. Units: ns, µs/us, ms, s (sign allowed)"
-                     Text="{Binding TriggerMeasurePositionText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+            <!-- Slider controls measure position as a fraction across the visible window (0..1). -->
+            <Slider Width="180" Minimum="0" Maximum="1" SmallChange="0.01" LargeChange="0.1"
+                    Value="{Binding Timeline.TriggerMeasurePositionFraction, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+            <!-- Human-readable label showing offset in divisions and time. -->
+            <TextBlock VerticalAlignment="Center" Margin="6,0,0,0"
+                       Text="{Binding Timeline.TriggerMeasurePositionDivText}"/>
             <TextBlock Text="Holdoff:" VerticalAlignment="Center"/>
             <TextBox Width="110"
                      Watermark="e.g. 100 µs"

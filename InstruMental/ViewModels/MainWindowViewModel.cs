@@ -60,10 +60,6 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
         {
             OnPropertyChanged(nameof(TriggerHoldoffText));
         }
-        if (string.IsNullOrEmpty(e.PropertyName) || e.PropertyName == nameof(TimelineViewModel.TriggerMeasurePositionText))
-        {
-            OnPropertyChanged(nameof(TriggerMeasurePositionText));
-        }
     }
 
     public string TriggerHoldoffText
@@ -72,11 +68,8 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
         set => Timeline.TriggerHoldoffText = value;
     }
 
-    public string TriggerMeasurePositionText
-    {
-        get => Timeline.TriggerMeasurePositionText;
-        set => Timeline.TriggerMeasurePositionText = value;
-    }
+    // Note: Trigger measure position is now controlled via slider bound to Timeline.TriggerMeasurePositionFraction
+    // and displayed via Timeline.TriggerMeasurePositionDivText. No local proxy is required.
 
     public TimelineViewModel Timeline { get; } = new();
 
@@ -204,13 +197,34 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
         return null;
     }
 
+    // Curated palette of dark, saturated (Material 800/900-style) colors that maintain contrast with white text.
+    private static readonly Color[] s_colorPalette = new[]
+    {
+        Color.FromArgb(255, 183, 28, 28),  // #B71C1C - Red 900
+        Color.FromArgb(255, 198, 40, 40),  // #C62828 - Red 800
+        Color.FromArgb(255, 173, 20, 87),  // #AD1457 - Pink 800
+        Color.FromArgb(255, 106, 27, 154), // #6A1B9A - Purple 800
+        Color.FromArgb(255, 69, 39, 160),  // #4527A0 - Deep Purple 800
+        Color.FromArgb(255, 13, 71, 161),  // #0D47A1 - Blue 900
+        Color.FromArgb(255, 2, 70, 122),   // #02467A - Deep blue variant
+        Color.FromArgb(255, 0, 77, 64),    // #004D40 - Teal 900
+        Color.FromArgb(255, 0, 96, 100),   // #006064 - Teal 800
+        Color.FromArgb(255, 27, 94, 32),   // #1B5E20 - Green 900
+        Color.FromArgb(255, 46, 125, 50),  // #2E7D32 - Green 700 (kept)
+        Color.FromArgb(255, 93, 64, 55),   // #5D4037 - Brown 700 (kept)
+        Color.FromArgb(255, 69, 90, 100),  // #455A64 - Blue Grey 700 (kept)
+        Color.FromArgb(255, 55, 71, 79),   // #37474F - Blue Grey 800 (kept)
+        Color.FromArgb(255, 38, 50, 56),   // #263238 - Blue Grey 900
+    };
+
     private static Color ColorFromName(string name)
     {
         if (string.IsNullOrEmpty(name))
         {
             return Colors.SteelBlue;
         }
-        // Simple deterministic hash to color mapping
+
+        // Stable deterministic hash -> non-negative index into palette
         unchecked
         {
             int hash = 17;
@@ -218,14 +232,10 @@ public partial class MainWindowViewModel : ViewModelBase, IAsyncDisposable, IDis
             {
                 hash = hash * 31 + ch;
             }
-            byte r = (byte)(hash & 0xFF);
-            byte g = (byte)((hash >> 8) & 0xFF);
-            byte b = (byte)((hash >> 16) & 0xFF);
-            // Normalize to slightly brighter palette
-            r = (byte)(128 + (r / 2));
-            g = (byte)(128 + (g / 2));
-            b = (byte)(128 + (b / 2));
-            return Color.FromArgb(255, r, g, b);
+
+            // Cast to unsigned to ensure non-negative, then modulo palette length
+            var idx = (int)((uint)hash % (uint)s_colorPalette.Length);
+            return s_colorPalette[idx];
         }
     }
 
